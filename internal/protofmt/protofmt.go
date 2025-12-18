@@ -1,0 +1,154 @@
+package protofmt
+
+import (
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"strconv"
+	"strings"
+)
+
+const Prefix = "mtsh:"
+
+// Non-interactive
+type Request struct {
+	ID      string
+	Command string
+}
+
+type ResponseChunk struct {
+	ID   string
+	Seq  int
+	Last bool
+	Data []byte
+}
+
+// Interactive
+type OpenSession struct {
+	SID string
+	Cmd string // optional; empty => default shell
+}
+
+type CloseSession struct {
+	SID string
+}
+
+type IOChunk struct {
+	SID  string
+	Seq  int
+	Last bool // for output stream "frame complete" marker; client uses it to show spinner etc.
+	Data []byte
+}
+
+func MakeRequest(id, cmd string) string {
+	return fmt.Sprintf("%s0:%s:%s", Prefix, id, cmd)
+}
+
+func ParseRequest(s string) (Request, bool) {
+	if !strings.HasPrefix(s, Prefix+"0:") {
+		return Request{}, false
+	}
+	rest := strings.TrimPrefix(s, Prefix+"0:")
+	i := strings.IndexByte(rest, ':')
+	if i <= 0 {
+		return Request{}, false
+	}
+	return Request{ID: rest[:i], Command: rest[i+1:]}, true
+}
+
+func MakeResponseChunk(id string, seq int, last bool, data []byte) string {
+	enc := base64.RawURLEncoding.EncodeToString(data)
+	lastStr := "0"
+	if last {
+		lastStr = "1"
+	}
+	return fmt.Sprintf("%s1:%s:%d:%s:%s", Prefix, id, seq, lastStr, enc)
+}
+
+func ParseResponseChunkStrict(s string) (ResponseChunk, error) {
+	if !strings.HasPrefix(s, Prefix+"1:") {
+		return ResponseChunk{}, errors.New("not a response")
+	}
+	rest := strings.TrimPrefix(s, Prefix+"1:")
+	parts := strings.SplitN(rest, ":", 4)
+	if len(parts) != 4 {
+		return ResponseChunk{}, errors.New("bad response format")
+	}
+	id := parts[0]
+	seq, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return ResponseChunk{}, err
+	}
+	last := parts[2] == "1"
+	data, err := base64.RawURLEncoding.DecodeString(parts[3])
+	if err != nil {
+		return ResponseChunk{}, err
+	}
+	return ResponseChunk{ID: id, Seq: seq, Last: last, Data: data}, nil
+}
+
+// --- interactive ---
+
+func MakeOpen(sid, cmd string) string {
+	return fmt.Sprintf("%sopen:%s:%s", Prefix, sid, cmd)
+}
+
+func ParseOpen(s string) (OpenSession, bool) {
+	if !strings.HasPrefix(s, Prefix+"open:") {
+		return OpenSession{}, false
+	}
+	rest := strings.TrimPrefix(s, Prefix+"open:")
+	parts := strings.SplitN(rest, ":", 2)
+	if len(parts) != 2 || parts[0] == "" {
+		return OpenSession{}, false
+	}
+	return OpenSession{SID: parts[0], Cmd: parts[1]}, true
+}
+
+func MakeClose(sid string) string {
+	return fmt.Sprintf("%sclose:%s", Prefix, sid)
+}
+
+func ParseClose(s string) (CloseSession, bool) {
+	if !strings.HasPrefix(s, Prefix+"close:") {
+		return CloseSession{}, false
+	}
+	rest := strings.TrimPrefix(s, Prefix+"close:")
+	if rest == "" {
+		return CloseSession{}, false
+	}
+	return CloseSession{SID: rest}, true
+}
+
+// IO frames (both directions):
+// mtsh:io:<sid>:<seq>:<last>:<b64>
+func MakeIO(sid string, seq int, last bool, data []byte) string {
+	enc := base64.RawURLEncoding.EncodeToString(data)
+	lastStr := "0"
+	if last {
+		lastStr = "1"
+	}
+	return fmt.Sprintf("%sio:%s:%d:%s:%s", Prefix, sid, seq, lastStr, enc)
+}
+
+func ParseIOStrict(s string) (IOChunk, error) {
+	if !strings.HasPrefix(s, Prefix+"io:") {
+		return IOChunk{}, errors.New("not io")
+	}
+	rest := strings.TrimPrefix(s, Prefix+"io:")
+	parts := strings.SplitN(rest, ":", 4)
+	if len(parts) != 4 {
+		return IOChunk{}, errors.New("bad io format")
+	}
+	sid := parts[0]
+	seq, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return IOChunk{}, err
+	}
+	last := parts[2] == "1"
+	data, err := base64.RawURLEncoding.DecodeString(parts[3])
+	if err != nil {
+		return IOChunk{}, err
+	}
+	return IOChunk{SID: sid, Seq: seq, Last: last, Data: data}, nil
+}
