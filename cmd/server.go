@@ -137,19 +137,7 @@ var serverCmd = &cobra.Command{
 				continue
 			}
 
-			out := runShell(flagShell, req.Command, flagCmdTimeout)
-			chunks := chunkBytes(out, flagChunkBytes)
-
-			dest := uint32(0xFFFFFFFF)
-
-			for i, c := range chunks {
-				last := i == len(chunks)-1
-				msg := protofmt.MakeResponseChunk(req.ID, i, last, c)
-				if err := dev.SendText(ctx, flagChannel, dest, msg); err != nil {
-					return err
-				}
-			}
-			logx.Debugf("server sent %d chunks for request id=%s replyDest=%d", len(chunks), req.ID, dest)
+			go handleRequest(ctx, dev, req)
 		}
 	},
 }
@@ -196,6 +184,23 @@ func chunkBytes(b []byte, max int) [][]byte {
 		b = b[n:]
 	}
 	return res
+}
+
+func handleRequest(ctx context.Context, dev *mt.Device, req protofmt.Request) {
+	out := runShell(flagShell, req.Command, flagCmdTimeout)
+	chunks := chunkBytes(out, flagChunkBytes)
+
+	dest := uint32(0xFFFFFFFF)
+
+	for i, c := range chunks {
+		last := i == len(chunks)-1
+		msg := protofmt.MakeResponseChunk(req.ID, i, last, c)
+		if err := dev.SendText(ctx, flagChannel, dest, msg); err != nil {
+			logx.Debugf("server failed to send response chunk: id=%s err=%v", req.ID, err)
+			return
+		}
+	}
+	logx.Debugf("server sent %d chunks for request id=%s replyDest=%d", len(chunks), req.ID, dest)
 }
 
 // --- interactive session ---

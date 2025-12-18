@@ -21,9 +21,14 @@ type Device struct {
 	ackMu      sync.Mutex
 	ackWaiters map[uint32]chan *proto.QueueStatus
 	ackTimeout time.Duration
+	ctx        context.Context
 	textCh     chan RxText
 	errCh      chan error
 	cancel     context.CancelFunc
+	pendingMu  sync.Mutex
+	pending    []RxText
+	flushing   bool
+	flushWg    sync.WaitGroup
 }
 
 type NodeDetails struct {
@@ -95,6 +100,7 @@ func Open(ctx context.Context, port string, ackTimeout time.Duration) (*Device, 
 		info:       info,
 		ackWaiters: make(map[uint32]chan *proto.QueueStatus),
 		ackTimeout: ackTimeout,
+		ctx:        bgCtx,
 		textCh:     make(chan RxText, 128),
 		errCh:      make(chan error, 1),
 		cancel:     cancel,
@@ -252,11 +258,15 @@ func (d *Device) dispatchQueueStatus(qs *proto.QueueStatus) {
 }
 
 func (d *Device) readLoop(ctx context.Context) {
+	defer func() {
+		d.flushWg.Wait()
+		close(d.textCh)
+	}()
+
 	for {
 		frame, err := d.T.ReceiveFromRadio(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
-				close(d.textCh)
 				return
 			}
 			logx.Debugf("mt: receive error: %v", err)
@@ -264,7 +274,6 @@ func (d *Device) readLoop(ctx context.Context) {
 			case d.errCh <- err:
 			default:
 			}
-			close(d.textCh)
 			return
 		}
 		if qs := frame.GetQueueStatus(); qs != nil {
@@ -290,10 +299,43 @@ func (d *Device) readLoop(ctx context.Context) {
 			Text:     text,
 			PacketID: p.GetId(),
 		}
+		d.enqueueRx(rx)
+	}
+}
+
+func (d *Device) enqueueRx(rx RxText) {
+	select {
+	case d.textCh <- rx:
+		return
+	default:
+	}
+
+	d.pendingMu.Lock()
+	d.pending = append(d.pending, rx)
+	if !d.flushing {
+		d.flushing = true
+		d.flushWg.Add(1)
+		go d.flushPending()
+	}
+	d.pendingMu.Unlock()
+}
+
+func (d *Device) flushPending() {
+	defer d.flushWg.Done()
+	for {
+		d.pendingMu.Lock()
+		if len(d.pending) == 0 {
+			d.flushing = false
+			d.pendingMu.Unlock()
+			return
+		}
+		rx := d.pending[0]
+		d.pending = d.pending[1:]
+		d.pendingMu.Unlock()
+
 		select {
 		case d.textCh <- rx:
-		case <-ctx.Done():
-			close(d.textCh)
+		case <-d.ctx.Done():
 			return
 		}
 	}
