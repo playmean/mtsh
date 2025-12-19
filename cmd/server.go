@@ -137,6 +137,8 @@ var serverCmd = &cobra.Command{
 				continue
 			}
 
+			logx.Debugf("server received request: id=%s from=%d hops=%d hopStart=%d hopLimit=%d", req.ID, rx.FromNode, rx.Hops, rx.HopStart, rx.HopLimit)
+
 			go handleRequest(ctx, dev, req)
 		}
 	},

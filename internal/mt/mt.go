@@ -11,24 +11,28 @@ import (
 
 	meshtastic "github.com/exepirit/meshtastic-go/pkg/meshtastic"
 	"github.com/exepirit/meshtastic-go/pkg/meshtastic/proto"
-	"github.com/exepirit/meshtastic-go/pkg/meshtastic/serial"
+	"google.golang.org/protobuf/encoding/protojson"
+	pbproto "google.golang.org/protobuf/proto"
 )
 
 type Device struct {
-	D          *meshtastic.Device
-	T          *serial.StreamTransport
-	info       NodeDetails
-	ackMu      sync.Mutex
-	ackWaiters map[uint32]chan *proto.QueueStatus
-	ackTimeout time.Duration
-	ctx        context.Context
-	textCh     chan RxText
-	errCh      chan error
-	cancel     context.CancelFunc
-	pendingMu  sync.Mutex
-	pending    []RxText
-	flushing   bool
-	flushWg    sync.WaitGroup
+	D            *meshtastic.Device
+	T            *serialTransport
+	info         NodeDetails
+	ackMu        sync.Mutex
+	ackWaiters   map[uint32]chan *proto.QueueStatus
+	ackTimeout   time.Duration
+	ctx          context.Context
+	textCh       chan RxText
+	errCh        chan error
+	cancel       context.CancelFunc
+	pendingMu    sync.Mutex
+	pending      []RxText
+	flushing     bool
+	flushWg      sync.WaitGroup
+	infoMu       sync.Mutex
+	configLogged bool
+	loggedNodes  map[uint32]bool
 }
 
 type NodeDetails struct {
@@ -73,7 +77,7 @@ func (n NodeDetails) String() string {
 
 func Open(ctx context.Context, port string, ackTimeout time.Duration) (*Device, error) {
 	logx.Debugf("mt: opening serial port %s", port)
-	t, err := serial.NewTransport(port)
+	t, err := newSerialTransport(port)
 	if err != nil {
 		logx.Debugf("mt: serial transport error on %s: %v", port, err)
 		return nil, err
@@ -130,6 +134,9 @@ type RxText struct {
 	Channel  uint32
 	Text     string
 	PacketID uint32
+	HopStart uint32
+	HopLimit uint32
+	Hops     uint32
 }
 
 func (d *Device) RecvText(ctx context.Context) (RxText, error) {
@@ -280,24 +287,44 @@ func (d *Device) readLoop(ctx context.Context) {
 			d.dispatchQueueStatus(qs)
 			continue
 		}
+		if d.handleMetaFrame(frame) {
+			continue
+		}
 		p := frame.GetPacket()
 		if p == nil {
+			variant := "nil_variant"
+			if frame.PayloadVariant != nil {
+				variant = fmt.Sprintf("%T", frame.PayloadVariant)
+			}
+			logx.Debugf("mt: ignoring from-radio message variant=%s", variant)
 			continue
 		}
 		dec := p.GetDecoded()
 		if dec == nil {
+			logx.Debugf("mt: ignoring packet without decoded payload id=%d from=%d", p.GetId(), p.GetFrom())
 			continue
 		}
-		if dec.GetPortnum() != proto.PortNum_TEXT_MESSAGE_APP {
+		port := dec.GetPortnum()
+		if port != proto.PortNum_TEXT_MESSAGE_APP {
+			portName := proto.PortNum_name[int32(port)]
+			if portName == "" {
+				portName = fmt.Sprintf("port_%d", port)
+			}
+			logx.Debugf("mt: ignoring packet id=%d from=%d to=%d channel=%d port=%s", p.GetId(), p.GetFrom(), p.GetTo(), p.GetChannel(), strings.ToLower(portName))
 			continue
 		}
 		text := strings.TrimRight(string(dec.GetPayload()), "\x00\r\n")
+		hopStart := p.GetHopStart()
+		hopLimit := p.GetHopLimit()
 		rx := RxText{
 			FromNode: p.GetFrom(),
 			ToNode:   p.GetTo(),
 			Channel:  p.GetChannel(),
 			Text:     text,
 			PacketID: p.GetId(),
+			HopStart: hopStart,
+			HopLimit: hopLimit,
+			Hops:     computeHopCount(hopStart, hopLimit),
 		}
 		d.enqueueRx(rx)
 	}
@@ -339,4 +366,109 @@ func (d *Device) flushPending() {
 			return
 		}
 	}
+}
+
+func (d *Device) handleMetaFrame(frame *proto.FromRadio) bool {
+	if cfg := frame.GetConfig(); cfg != nil {
+		d.logInitialConfig(cfg)
+		return true
+	}
+	if node := frame.GetNodeInfo(); node != nil {
+		d.logNodeAnnouncement(node)
+		return true
+	}
+	return false
+}
+
+func (d *Device) logInitialConfig(cfg *proto.Config) {
+	if cfg == nil {
+		return
+	}
+	d.infoMu.Lock()
+	if d.configLogged {
+		d.infoMu.Unlock()
+		return
+	}
+	d.configLogged = true
+	d.infoMu.Unlock()
+
+	logx.Debugf("mt: initial config %s", protoCompact(cfg))
+}
+
+func (d *Device) logNodeAnnouncement(node *proto.NodeInfo) {
+	if node == nil {
+		return
+	}
+	num := node.GetNum()
+	d.infoMu.Lock()
+	if d.loggedNodes == nil {
+		d.loggedNodes = make(map[uint32]bool)
+	}
+	if d.loggedNodes[num] {
+		d.infoMu.Unlock()
+		return
+	}
+	d.loggedNodes[num] = true
+	d.infoMu.Unlock()
+
+	userName := userDisplayName(node.GetUser())
+	userID := ""
+	if u := node.GetUser(); u != nil {
+		userID = u.GetId()
+	}
+	location := ""
+	if pos := node.GetPosition(); pos != nil {
+		lat := pos.GetLatitudeI()
+		lon := pos.GetLongitudeI()
+		if lat != 0 || lon != 0 {
+			location = fmt.Sprintf(" lat=%.5f lon=%.5f", float64(lat)/1e7, float64(lon)/1e7)
+		}
+		if alt := pos.GetAltitude(); alt != 0 {
+			location = fmt.Sprintf("%s alt=%dm", location, alt)
+		}
+	}
+	logx.Debugf("mt: discovered node num=%d name=%s id=%s channel=%d hops=%d snr=%.1f via-mqtt=%v favorite=%v ignored=%v%s",
+		num, userName, userID, node.GetChannel(), node.GetHopsAway(), node.GetSnr(), node.GetViaMqtt(), node.GetIsFavorite(), node.GetIsIgnored(), location)
+}
+
+func userDisplayName(user *proto.User) string {
+	if user == nil {
+		return ""
+	}
+	if name := user.GetLongName(); name != "" {
+		return name
+	}
+	if name := user.GetShortName(); name != "" {
+		return name
+	}
+	return user.GetId()
+}
+
+func computeHopCount(hopStart, hopLimit uint32) uint32 {
+	if hopStart == 0 {
+		return 0
+	}
+	if hopLimit > hopStart {
+		return 0
+	}
+	return hopStart - hopLimit
+}
+
+var protoLogOptions = protojson.MarshalOptions{
+	EmitUnpopulated: false,
+	UseEnumNumbers:  false,
+}
+
+func protoCompact(m pbproto.Message) string {
+	if m == nil {
+		return ""
+	}
+	data, err := protoLogOptions.Marshal(m)
+	if err != nil {
+		if s, ok := any(m).(fmt.Stringer); ok {
+			return s.String()
+		}
+		return fmt.Sprintf("%T", m)
+	}
+	return string(data)
 }

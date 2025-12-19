@@ -150,6 +150,7 @@ var clientCmd = &cobra.Command{
 					if !ok {
 						return fmt.Errorf("serial reader stopped")
 					}
+					logx.Debugf("client received packet candidate: req=%s from=%d hops=%d hopStart=%d hopLimit=%d", reqID, rx.FromNode, rx.Hops, rx.HopStart, rx.HopLimit)
 					ch, err := protofmt.ParseResponseChunkStrict(rx.Text)
 					if err != nil || ch.ID != reqID {
 						continue
@@ -295,7 +296,7 @@ func runInteractive(ctx context.Context, dev *mt.Device, rxCh <-chan mt.RxText, 
 			if err != nil || ioc.SID != sid {
 				continue
 			}
-			logx.Debugf("client received IO frame sid=%s seq=%d bytes=%d last=%v", sid, ioc.Seq, len(ioc.Data), ioc.Last)
+			logx.Debugf("client received IO frame sid=%s seq=%d bytes=%d last=%v hops=%d hopStart=%d hopLimit=%d", sid, ioc.Seq, len(ioc.Data), ioc.Last, rx.Hops, rx.HopStart, rx.HopLimit)
 
 			// print output bytes
 			_, _ = os.Stdout.Write(ioc.Data)
