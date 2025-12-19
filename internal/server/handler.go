@@ -108,12 +108,7 @@ func chunkBytes(b []byte, max int) [][]byte {
 	return res
 }
 
-const compressThreshold = 1024
-
 func maybeCompressResponse(data []byte) ([]byte, bool) {
-	if len(data) <= compressThreshold {
-		return data, false
-	}
 	var buf bytes.Buffer
 	zw := gzip.NewWriter(&buf)
 	if _, err := zw.Write(data); err != nil {
@@ -123,6 +118,10 @@ func maybeCompressResponse(data []byte) ([]byte, bool) {
 	}
 	if err := zw.Close(); err != nil {
 		logx.Debugf("server gzip close failed, sending raw: err=%v", err)
+		return data, false
+	}
+	if buf.Len() >= len(data) {
+		logx.Debugf("server skipping compression: in=%d out=%d (no gain)", len(data), buf.Len())
 		return data, false
 	}
 	logx.Debugf("server compressed response: in=%d out=%d", len(data), buf.Len())
