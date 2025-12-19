@@ -2,10 +2,13 @@ package cmd
 
 import (
 	"bufio"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strings"
@@ -135,7 +138,10 @@ var clientCmd = &cobra.Command{
 			gotAny := false
 			expectSeq := 0
 			buffer := make(map[int][]byte)
+			encodedMap := make(map[int]bool)
 			lastSeq := -1
+			gzipResponse := false
+			var gzipBuf bytes.Buffer
 
 			for {
 				select {
@@ -179,14 +185,23 @@ var clientCmd = &cobra.Command{
 					}
 
 					buffer[ch.Seq] = append([]byte(nil), ch.Data...)
+					encodedMap[ch.Seq] = ch.Encoded
 
 					for {
 						data, ok := buffer[expectSeq]
 						if !ok {
 							break
 						}
-						_, _ = os.Stdout.Write(data)
+						if expectSeq == 0 && encodedMap[expectSeq] && looksLikeGzip(data) {
+							gzipResponse = true
+						}
+						if gzipResponse {
+							gzipBuf.Write(data)
+						} else {
+							_, _ = os.Stdout.Write(data)
+						}
 						delete(buffer, expectSeq)
+						delete(encodedMap, expectSeq)
 						expectSeq++
 					}
 
@@ -195,6 +210,14 @@ var clientCmd = &cobra.Command{
 					}
 
 					if ch.Last && lastSeq >= 0 && expectSeq > lastSeq {
+						if gzipResponse {
+							if err := flushGzipBuffer(&gzipBuf); err != nil {
+								fmt.Fprintf(os.Stderr, "[mtsh] failed to decompress response: %v\n", err)
+								logx.Debugf("client failed to decompress gzip response id=%s: %v", reqID, err)
+							}
+							gzipBuf.Reset()
+							gzipResponse = false
+						}
 						logx.Debugf("client finished receiving response: id=%s chunks=%d", reqID, expectSeq)
 						goto NEXT
 					}
@@ -240,4 +263,25 @@ func sendChunkAck(ctx context.Context, dev *mt.Device, reqID string, seq int, de
 		return
 	}
 	logx.Debugf("client sent chunk ack: id=%s seq=%d", reqID, seq)
+}
+
+func looksLikeGzip(b []byte) bool {
+	return len(b) >= 2 && b[0] == 0x1f && b[1] == 0x8b
+}
+
+func flushGzipBuffer(buf *bytes.Buffer) error {
+	if buf.Len() == 0 {
+		return nil
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(buf.Bytes()))
+	if err != nil {
+		return err
+	}
+	defer zr.Close()
+	data, err := io.ReadAll(zr)
+	if err != nil {
+		return err
+	}
+	_, err = os.Stdout.Write(data)
+	return err
 }

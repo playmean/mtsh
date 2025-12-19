@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
@@ -145,9 +146,12 @@ func chunkBytes(b []byte, max int) [][]byte {
 	return res
 }
 
+const compressThreshold = 1024
+
 func handleRequest(ctx context.Context, dev *mt.Device, req protofmt.Request, ackMgr *chunkAckManager) {
 	out := runShell(flagShell, req.Command, flagCmdTimeout)
-	chunks := chunkBytes(out, flagChunkBytes)
+	payload, compressed := maybeCompressResponse(out)
+	chunks := chunkBytes(payload, flagChunkBytes)
 
 	dest := uint32(0xFFFFFFFF)
 	var ackCh <-chan protofmt.ChunkAck
@@ -197,7 +201,26 @@ func handleRequest(ctx context.Context, dev *mt.Device, req protofmt.Request, ac
 			return
 		}
 	}
-	logx.Debugf("server sent %d chunks for request id=%s replyDest=%d ack=%v retries=%d", len(chunks), req.ID, dest, ackEnabled, retryLimit)
+	logx.Debugf("server sent %d chunks for request id=%s replyDest=%d ack=%v retries=%d compressed=%v", len(chunks), req.ID, dest, ackEnabled, retryLimit, compressed)
+}
+
+func maybeCompressResponse(data []byte) ([]byte, bool) {
+	if len(data) <= compressThreshold {
+		return data, false
+	}
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	if _, err := zw.Write(data); err != nil {
+		logx.Debugf("server gzip compression failed, sending raw: err=%v", err)
+		_ = zw.Close()
+		return data, false
+	}
+	if err := zw.Close(); err != nil {
+		logx.Debugf("server gzip close failed, sending raw: err=%v", err)
+		return data, false
+	}
+	logx.Debugf("server compressed response: in=%d out=%d", len(data), buf.Len())
+	return buf.Bytes(), true
 }
 
 type chunkAckManager struct {
