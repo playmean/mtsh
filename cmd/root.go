@@ -14,11 +14,8 @@ var (
 	flagPort       string
 	flagChannel    uint32
 	flagChunkBytes int
-	flagShell      string
 	flagAckTimeout time.Duration
 
-	flagDM       uint32
-	flagDMOnly   bool
 	flagDedupTTL time.Duration
 	flagDedupCap int
 
@@ -48,11 +45,8 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&flagPort, "port", "", "Serial port (e.g. /dev/ttyUSB0, COM5). Auto-detected if unset")
 	rootCmd.PersistentFlags().Uint32Var(&flagChannel, "channel", 0, "Meshtastic channel index (0..)")
 	rootCmd.PersistentFlags().IntVar(&flagChunkBytes, "chunk-bytes", 128, "Max payload bytes per outgoing text message chunk")
-	rootCmd.PersistentFlags().StringVar(&flagShell, "shell", "sh", "Shell to execute commands (server)")
-	rootCmd.PersistentFlags().DurationVar(&flagAckTimeout, "ack-timeout", 2*time.Minute, "Timeout waiting for radio ACK from Meshtastic device")
+	rootCmd.PersistentFlags().DurationVar(&flagAckTimeout, "ack-timeout", 10*time.Second, "Timeout waiting for radio ACK from Meshtastic device")
 
-	rootCmd.PersistentFlags().Uint32Var(&flagDM, "dm", 0, "Send as DM to nodenum (client). If 0 => broadcast on channel")
-	rootCmd.PersistentFlags().BoolVar(&flagDMOnly, "dm-only", false, "Server: accept only DM packets (ignore broadcast)")
 	rootCmd.PersistentFlags().DurationVar(&flagDedupTTL, "dedup-ttl", 10*time.Minute, "Deduplication TTL")
 	rootCmd.PersistentFlags().IntVar(&flagDedupCap, "dedup-cap", 2048, "Deduplication LRU capacity")
 	rootCmd.PersistentFlags().BoolVarP(&flagVerbose, "verbose", "v", false, "Enable verbose debug logging")

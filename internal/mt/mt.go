@@ -15,6 +15,8 @@ import (
 	pbproto "google.golang.org/protobuf/proto"
 )
 
+const BroadcastDest uint32 = 0xFFFFFFFF
+
 type Device struct {
 	D            *meshtastic.Device
 	T            *serialTransport
@@ -158,7 +160,7 @@ func (d *Device) RecvText(ctx context.Context) (RxText, error) {
 	}
 }
 
-// destNode: meshtastic.BroadcastNodenum for channel broadcast; otherwise DM.
+// destNode identifies the packet destination; broadcast uses meshtastic.BroadcastNodenum.
 func (d *Device) SendText(ctx context.Context, channel uint32, destNode uint32, text string) error {
 	logx.Debugf("mt: TX channel=%d dest=%d bytes=%d text=%q", channel, destNode, len(text), text)
 	data := &proto.Data{
