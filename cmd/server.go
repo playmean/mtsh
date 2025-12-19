@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -19,8 +20,11 @@ import (
 )
 
 var (
-	flagCmdTimeout time.Duration
-	flagIOBytes    int
+	flagCmdTimeout      time.Duration
+	flagIOBytes         int
+	flagChunkDelay      time.Duration
+	flagChunkAckTimeout time.Duration
+	flagChunkAckRetries int
 )
 
 var serverCmd = &cobra.Command{
@@ -38,6 +42,7 @@ var serverCmd = &cobra.Command{
 
 		dedup := lru.New(flagDedupCap, flagDedupTTL)
 		sessDedup := lru.New(flagDedupCap, flagDedupTTL)
+		ackMgr := newChunkAckManager()
 
 		fmt.Printf("server: port=%s channel=%d dm-only=%v\n", flagPort, flagChannel, flagDMOnly)
 		nodeInfo := dev.Info()
@@ -71,6 +76,16 @@ var serverCmd = &cobra.Command{
 					logx.Debugf("server ignoring broadcast packet while dm-only mode active")
 					continue
 				}
+			}
+
+			// --- chunk ACK handling ---
+			if ack, ok := protofmt.ParseChunkAck(rx.Text); ok {
+				if ackMgr.deliver(ack) {
+					logx.Debugf("server received chunk ack: id=%s seq=%d from=%d", ack.ID, ack.Seq, rx.FromNode)
+				} else {
+					logx.Debugf("server got unexpected chunk ack: id=%s seq=%d from=%d", ack.ID, ack.Seq, rx.FromNode)
+				}
+				continue
 			}
 
 			// --- interactive control ---
@@ -139,7 +154,7 @@ var serverCmd = &cobra.Command{
 
 			logx.Debugf("server received request: id=%s from=%d hops=%d hopStart=%d hopLimit=%d", req.ID, rx.FromNode, rx.Hops, rx.HopStart, rx.HopLimit)
 
-			go handleRequest(ctx, dev, req)
+			go handleRequest(ctx, dev, req, ackMgr)
 		}
 	},
 }
@@ -147,6 +162,9 @@ var serverCmd = &cobra.Command{
 func init() {
 	serverCmd.Flags().DurationVar(&flagCmdTimeout, "cmd-timeout", 20*time.Second, "Per-command execution timeout")
 	serverCmd.Flags().IntVar(&flagIOBytes, "io-bytes", 140, "Max io bytes per interactive frame")
+	serverCmd.Flags().DurationVar(&flagChunkDelay, "chunk-delay", 5*time.Second, "Delay between response chunks when client does not request ACK")
+	serverCmd.Flags().DurationVar(&flagChunkAckTimeout, "chunk-ack-timeout", time.Minute, "Timeout waiting for client chunk ACK")
+	serverCmd.Flags().IntVar(&flagChunkAckRetries, "chunk-ack-retries", 3, "Retries for chunk resend if ACK not received")
 }
 
 func runShell(shell, command string, timeout time.Duration) []byte {
@@ -188,21 +206,59 @@ func chunkBytes(b []byte, max int) [][]byte {
 	return res
 }
 
-func handleRequest(ctx context.Context, dev *mt.Device, req protofmt.Request) {
+func handleRequest(ctx context.Context, dev *mt.Device, req protofmt.Request, ackMgr *chunkAckManager) {
 	out := runShell(flagShell, req.Command, flagCmdTimeout)
 	chunks := chunkBytes(out, flagChunkBytes)
 
 	dest := uint32(0xFFFFFFFF)
+	var ackCh <-chan protofmt.ChunkAck
+	var ackEnabled bool
+	if req.RequireChunkAck && ackMgr != nil {
+		ackCh = ackMgr.register(req.ID)
+		ackEnabled = true
+		logx.Debugf("server chunk ACKs enabled: id=%s chunks=%d", req.ID, len(chunks))
+		defer ackMgr.unregister(req.ID)
+	} else if req.RequireChunkAck {
+		logx.Debugf("server chunk ACKs requested but manager unavailable: id=%s", req.ID)
+	}
+
+	retryLimit := flagChunkAckRetries
+	if retryLimit <= 0 {
+		retryLimit = 3
+	}
 
 	for i, c := range chunks {
 		last := i == len(chunks)-1
-		msg := protofmt.MakeResponseChunk(req.ID, i, last, c)
-		if err := dev.SendText(ctx, flagChannel, dest, msg); err != nil {
-			logx.Debugf("server failed to send response chunk: id=%s err=%v", req.ID, err)
+		attempt := 0
+		for {
+			msg := protofmt.MakeResponseChunk(req.ID, i, last, c)
+			if err := dev.SendText(ctx, flagChannel, dest, msg); err != nil {
+				logx.Debugf("server failed to send response chunk: id=%s err=%v", req.ID, err)
+				return
+			}
+
+			var waitErr error
+			if ackEnabled {
+				waitErr = waitForClientAck(ctx, req.ID, ackCh, i)
+			} else if !last && flagChunkDelay > 0 {
+				waitErr = sleepWithContext(ctx, flagChunkDelay)
+			}
+
+			if waitErr == nil {
+				break
+			}
+
+			if ackEnabled && errors.Is(waitErr, errChunkAckTimeout) && attempt < retryLimit {
+				attempt++
+				logx.Debugf("server chunk ack timed out, retrying: id=%s seq=%d attempt=%d/%d", req.ID, i, attempt, retryLimit)
+				continue
+			}
+
+			logx.Debugf("server chunk handling failed: id=%s seq=%d err=%v", req.ID, i, waitErr)
 			return
 		}
 	}
-	logx.Debugf("server sent %d chunks for request id=%s replyDest=%d", len(chunks), req.ID, dest)
+	logx.Debugf("server sent %d chunks for request id=%s replyDest=%d ack=%v retries=%d", len(chunks), req.ID, dest, ackEnabled, retryLimit)
 }
 
 // --- interactive session ---
@@ -337,4 +393,96 @@ func (s *session) sendIO(dest uint32, data []byte) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	logx.Debugf("server session sent %d IO chunks sid=%s dest=%d", seq, s.sid, dest)
+}
+
+type chunkAckManager struct {
+	mu      sync.Mutex
+	waiters map[string]chan protofmt.ChunkAck
+}
+
+func newChunkAckManager() *chunkAckManager {
+	return &chunkAckManager{
+		waiters: make(map[string]chan protofmt.ChunkAck),
+	}
+}
+
+func (m *chunkAckManager) register(id string) <-chan protofmt.ChunkAck {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if ch, ok := m.waiters[id]; ok {
+		close(ch)
+	}
+	ch := make(chan protofmt.ChunkAck, 8)
+	m.waiters[id] = ch
+	return ch
+}
+
+func (m *chunkAckManager) unregister(id string) {
+	m.mu.Lock()
+	ch := m.waiters[id]
+	if ch != nil {
+		delete(m.waiters, id)
+	}
+	m.mu.Unlock()
+	if ch != nil {
+		close(ch)
+	}
+}
+
+func (m *chunkAckManager) deliver(ack protofmt.ChunkAck) bool {
+	m.mu.Lock()
+	ch := m.waiters[ack.ID]
+	m.mu.Unlock()
+	if ch == nil {
+		return false
+	}
+	select {
+	case ch <- ack:
+	default:
+	}
+	return true
+}
+
+var (
+	errChunkAckTimeout       = errors.New("chunk ack timeout")
+	errChunkAckChannelClosed = errors.New("chunk ack channel closed")
+)
+
+func waitForClientAck(ctx context.Context, id string, ch <-chan protofmt.ChunkAck, seq int) error {
+	if ch == nil {
+		return nil
+	}
+	timer := time.NewTimer(flagChunkAckTimeout)
+	defer timer.Stop()
+	for {
+		select {
+		case ack, ok := <-ch:
+			if !ok {
+				return errChunkAckChannelClosed
+			}
+			if ack.Seq == seq {
+				logx.Debugf("server received chunk ack confirmation: id=%s seq=%d", id, seq)
+				return nil
+			}
+			logx.Debugf("server ignoring mismatched chunk ack: id=%s want=%d got=%d", id, seq, ack.Seq)
+		case <-timer.C:
+			return errChunkAckTimeout
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+func sleepWithContext(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }

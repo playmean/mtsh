@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 var (
 	flagWaitTimeout time.Duration
 	flagInteractive bool
+	flagChunkAck    bool
 )
 
 var clientCmd = &cobra.Command{
@@ -35,6 +37,11 @@ var clientCmd = &cobra.Command{
 		}
 		defer dev.Close()
 		logx.Debugf("client command connected to device: port=%s", flagPort)
+
+		sigCh := make(chan os.Signal, 2)
+		signal.Notify(sigCh, os.Interrupt)
+		defer signal.Stop(sigCh)
+		var ctrlCUsed bool
 
 		dest := uint32(0xFFFFFFFF)
 
@@ -109,19 +116,24 @@ var clientCmd = &cobra.Command{
 					return fmt.Errorf("serial read error: %w", err)
 				}
 				return fmt.Errorf("serial reader stopped")
+			case <-sigCh:
+				return fmt.Errorf("interrupted")
 			}
 			if line == "" {
 				continue
 			}
 
 			reqID := randID()
-			reqMsg := protofmt.MakeRequest(reqID, line)
+			opts := protofmt.RequestOptions{RequireChunkAck: flagChunkAck}
+			reqMsg := protofmt.MakeRequest(reqID, line, opts)
 			if err := dev.SendText(ctx, flagChannel, dest, reqMsg); err != nil {
 				fmt.Fprintln(os.Stderr, "send error:", err)
 				logx.Debugf("client send request failed: id=%s err=%v", reqID, err)
 				continue
 			}
 			logx.Debugf("client sent request: id=%s cmd=%q", reqID, line)
+			waitAck := flagChunkAck
+			ctrlCUsed = false
 
 			timer := time.NewTimer(flagWaitTimeout)
 			defer timer.Stop()
@@ -166,6 +178,9 @@ var clientCmd = &cobra.Command{
 
 					if ch.Seq < expectSeq {
 						// duplicate chunk; already processed
+						if waitAck {
+							sendChunkAck(ctx, dev, reqID, ch.Seq, dest)
+						}
 						continue
 					}
 
@@ -181,6 +196,10 @@ var clientCmd = &cobra.Command{
 						expectSeq++
 					}
 
+					if waitAck {
+						sendChunkAck(ctx, dev, reqID, ch.Seq, dest)
+					}
+
 					if ch.Last && lastSeq >= 0 && expectSeq > lastSeq {
 						logx.Debugf("client finished receiving response: id=%s chunks=%d", reqID, expectSeq)
 						goto NEXT
@@ -193,6 +212,13 @@ var clientCmd = &cobra.Command{
 						}
 					}
 					timer.Reset(flagWaitTimeout)
+				case <-sigCh:
+					if !ctrlCUsed {
+						ctrlCUsed = true
+						fmt.Fprintln(os.Stderr, "\n[mtsh] response canceled by Ctrl+C (press Ctrl+C again to exit)")
+						goto NEXT
+					}
+					return fmt.Errorf("interrupted")
 				}
 			}
 		NEXT:
@@ -205,12 +231,22 @@ var clientCmd = &cobra.Command{
 func init() {
 	clientCmd.Flags().DurationVar(&flagWaitTimeout, "wait-timeout", 2*time.Minute, "Timeout waiting for remaining response chunks")
 	clientCmd.Flags().BoolVar(&flagInteractive, "interactive", false, "Interactive shell mode (PTY over radio)")
+	clientCmd.Flags().BoolVar(&flagChunkAck, "chunk-ack", false, "Request ACK between response chunks")
 }
 
 func randID() string {
 	var x [2]byte
 	_, _ = rand.Read(x[:])
 	return hex.EncodeToString(x[:])
+}
+
+func sendChunkAck(ctx context.Context, dev *mt.Device, reqID string, seq int, dest uint32) {
+	msg := protofmt.MakeChunkAck(reqID, seq)
+	if err := dev.SendText(ctx, flagChannel, dest, msg); err != nil {
+		logx.Debugf("client failed to send chunk ack: id=%s seq=%d err=%v", reqID, seq, err)
+		return
+	}
+	logx.Debugf("client sent chunk ack: id=%s seq=%d", reqID, seq)
 }
 
 // --- interactive mode ---

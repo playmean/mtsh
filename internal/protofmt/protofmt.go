@@ -12,8 +12,13 @@ const Prefix = "mtsh:"
 
 // Non-interactive
 type Request struct {
-	ID      string
-	Command string
+	ID              string
+	Command         string
+	RequireChunkAck bool
+}
+
+type RequestOptions struct {
+	RequireChunkAck bool
 }
 
 type ResponseChunk struct {
@@ -40,8 +45,12 @@ type IOChunk struct {
 	Data []byte
 }
 
-func MakeRequest(id, cmd string) string {
-	return fmt.Sprintf("%s0:%s:%s", Prefix, id, cmd)
+func MakeRequest(id, cmd string, opts RequestOptions) string {
+	optStr := encodeRequestOptions(opts)
+	if optStr == "" {
+		return fmt.Sprintf("%s0:%s:%s", Prefix, id, cmd)
+	}
+	return fmt.Sprintf("%s0:%s!%s:%s", Prefix, id, optStr, cmd)
 }
 
 func ParseRequest(s string) (Request, bool) {
@@ -53,7 +62,26 @@ func ParseRequest(s string) (Request, bool) {
 	if i <= 0 {
 		return Request{}, false
 	}
-	return Request{ID: rest[:i], Command: rest[i+1:]}, true
+	head := rest[:i]
+	cmd := rest[i+1:]
+	if head == "" {
+		return Request{}, false
+	}
+	opts := RequestOptions{}
+	id := head
+	if bang := strings.IndexByte(head, '!'); bang >= 0 {
+		id = head[:bang]
+		optStr := head[bang+1:]
+		if id == "" {
+			return Request{}, false
+		}
+		opts = decodeRequestOptions(optStr)
+	}
+	return Request{
+		ID:              id,
+		Command:         cmd,
+		RequireChunkAck: opts.RequireChunkAck,
+	}, true
 }
 
 func MakeResponseChunk(id string, seq int, last bool, data []byte) string {
@@ -151,4 +179,53 @@ func ParseIOStrict(s string) (IOChunk, error) {
 		return IOChunk{}, err
 	}
 	return IOChunk{SID: sid, Seq: seq, Last: last, Data: data}, nil
+}
+
+type ChunkAck struct {
+	ID  string
+	Seq int
+}
+
+func MakeChunkAck(id string, seq int) string {
+	return fmt.Sprintf("%sack:%s:%d", Prefix, id, seq)
+}
+
+func ParseChunkAck(s string) (ChunkAck, bool) {
+	if !strings.HasPrefix(s, Prefix+"ack:") {
+		return ChunkAck{}, false
+	}
+	rest := strings.TrimPrefix(s, Prefix+"ack:")
+	parts := strings.SplitN(rest, ":", 2)
+	if len(parts) != 2 || parts[0] == "" {
+		return ChunkAck{}, false
+	}
+	seq, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return ChunkAck{}, false
+	}
+	return ChunkAck{ID: parts[0], Seq: seq}, true
+}
+
+func encodeRequestOptions(opts RequestOptions) string {
+	var tokens []string
+	if opts.RequireChunkAck {
+		tokens = append(tokens, "ack")
+	}
+	return strings.Join(tokens, ",")
+}
+
+func decodeRequestOptions(s string) RequestOptions {
+	var opts RequestOptions
+	if s == "" {
+		return opts
+	}
+	for _, token := range strings.Split(s, ",") {
+		switch token {
+		case "ack":
+			opts.RequireChunkAck = true
+		case "", "0":
+		default:
+		}
+	}
+	return opts
 }
