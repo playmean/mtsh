@@ -30,18 +30,20 @@ var serverCmd = &cobra.Command{
 	Short: "Run commands received over Meshtastic and reply with output",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := cmd.Context()
-		logx.Debugf("server command starting: port=%s channel=%d shell=%s chunkBytes=%d", flagPort, flagChannel, flagShell, flagChunkBytes)
-		dev, err := mt.Open(ctx, flagPort, flagAckTimeout)
+		requested := flagPort
+		logx.Debugf("server command starting: requestedPort=%s channel=%d shell=%s chunkBytes=%d", requested, flagChannel, flagShell, flagChunkBytes)
+		dev, port, err := openDevice(ctx)
 		if err != nil {
 			return err
 		}
 		defer dev.Close()
-		logx.Debugf("server command connected to device: port=%s", flagPort)
+		logx.Debugf("server command connected to device: port=%s", port)
 
 		dedup := lru.New(flagDedupCap, flagDedupTTL)
 		ackMgr := newChunkAckManager()
+		reqCancels := newRequestCanceler()
 
-		fmt.Printf("server: port=%s channel=%d dm-only=%v\n", flagPort, flagChannel, flagDMOnly)
+		fmt.Printf("server: port=%s channel=%d dm-only=%v\n", port, flagChannel, flagDMOnly)
 		nodeInfo := dev.Info()
 		fmt.Printf("node: %s\n", nodeInfo)
 		logx.Debugf("server connected node: %s", nodeInfo)
@@ -93,9 +95,17 @@ var serverCmd = &cobra.Command{
 				continue
 			}
 
+			reqCancels.cancelAll()
+			reqCtx, cancel := context.WithCancel(ctx)
+			cleanup := reqCancels.register(req.ID, cancel)
+
 			logx.Debugf("server received request: id=%s from=%d hops=%d hopStart=%d hopLimit=%d", req.ID, rx.FromNode, rx.Hops, rx.HopStart, rx.HopLimit)
 
-			go handleRequest(ctx, dev, req, ackMgr)
+			go func() {
+				defer cleanup()
+				defer cancel()
+				handleRequest(reqCtx, dev, req, ackMgr)
+			}()
 		}
 	},
 }
@@ -269,6 +279,48 @@ func (m *chunkAckManager) deliver(ack protofmt.ChunkAck) bool {
 	default:
 	}
 	return true
+}
+
+type requestCanceler struct {
+	mu      sync.Mutex
+	cancels map[string]*cancelEntry
+}
+
+type cancelEntry struct {
+	cancel context.CancelFunc
+}
+
+func newRequestCanceler() *requestCanceler {
+	return &requestCanceler{
+		cancels: make(map[string]*cancelEntry),
+	}
+}
+
+func (rc *requestCanceler) register(id string, cancel context.CancelFunc) func() {
+	entry := &cancelEntry{cancel: cancel}
+	rc.mu.Lock()
+	rc.cancels[id] = entry
+	rc.mu.Unlock()
+	return func() {
+		rc.mu.Lock()
+		if c, ok := rc.cancels[id]; ok && c == entry {
+			delete(rc.cancels, id)
+		}
+		rc.mu.Unlock()
+	}
+}
+
+func (rc *requestCanceler) cancelAll() {
+	rc.mu.Lock()
+	cancels := make([]context.CancelFunc, 0, len(rc.cancels))
+	for id, entry := range rc.cancels {
+		cancels = append(cancels, entry.cancel)
+		delete(rc.cancels, id)
+	}
+	rc.mu.Unlock()
+	for _, cancel := range cancels {
+		cancel()
+	}
 }
 
 var (

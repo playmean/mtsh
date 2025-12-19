@@ -45,7 +45,7 @@ func init() {
 		}
 	})
 
-	rootCmd.PersistentFlags().StringVar(&flagPort, "port", "", "Serial port (e.g. /dev/ttyUSB0, COM5)")
+	rootCmd.PersistentFlags().StringVar(&flagPort, "port", "", "Serial port (e.g. /dev/ttyUSB0, COM5). Auto-detected if unset")
 	rootCmd.PersistentFlags().Uint32Var(&flagChannel, "channel", 0, "Meshtastic channel index (0..)")
 	rootCmd.PersistentFlags().IntVar(&flagChunkBytes, "chunk-bytes", 128, "Max payload bytes per outgoing text message chunk")
 	rootCmd.PersistentFlags().StringVar(&flagShell, "shell", "sh", "Shell to execute commands (server)")
@@ -56,8 +56,6 @@ func init() {
 	rootCmd.PersistentFlags().DurationVar(&flagDedupTTL, "dedup-ttl", 10*time.Minute, "Deduplication TTL")
 	rootCmd.PersistentFlags().IntVar(&flagDedupCap, "dedup-cap", 2048, "Deduplication LRU capacity")
 	rootCmd.PersistentFlags().BoolVarP(&flagVerbose, "verbose", "v", false, "Enable verbose debug logging")
-
-	_ = rootCmd.MarkPersistentFlagRequired("port")
 
 	rootCmd.AddCommand(serverCmd)
 	rootCmd.AddCommand(clientCmd)
