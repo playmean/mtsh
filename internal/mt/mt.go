@@ -313,7 +313,7 @@ func (d *Device) readLoop(ctx context.Context) {
 			logx.Debugf("mt: ignoring packet id=%d from=%d to=%d channel=%d port=%s", p.GetId(), p.GetFrom(), p.GetTo(), p.GetChannel(), strings.ToLower(portName))
 			continue
 		}
-		text := strings.TrimRight(string(dec.GetPayload()), "\x00\r\n")
+		text := strings.TrimRight(string(dec.GetPayload()), "\x00\r")
 		hopStart := p.GetHopStart()
 		hopLimit := p.GetHopLimit()
 		rx := RxText{

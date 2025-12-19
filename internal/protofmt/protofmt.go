@@ -21,10 +21,11 @@ type RequestOptions struct {
 }
 
 type ResponseChunk struct {
-	ID   string
-	Seq  int
-	Last bool
-	Data []byte
+	ID      string
+	Seq     int
+	Last    bool
+	Encoded bool
+	Data    []byte
 }
 
 func MakeRequest(id, cmd string, opts RequestOptions) string {
@@ -67,12 +68,15 @@ func ParseRequest(s string) (Request, bool) {
 }
 
 func MakeResponseChunk(id string, seq int, last bool, data []byte) string {
-	enc := base64.RawURLEncoding.EncodeToString(data)
 	lastStr := "0"
 	if last {
 		lastStr = "1"
 	}
-	return fmt.Sprintf("%s1:%s:%d:%s:%s", Prefix, id, seq, lastStr, enc)
+	if hasNonASCII(data) {
+		enc := base64.RawURLEncoding.EncodeToString(data)
+		return fmt.Sprintf("%s1:%s:%d:%s:1:%s", Prefix, id, seq, lastStr, enc)
+	}
+	return fmt.Sprintf("%s1:%s:%d:%s:0:%s", Prefix, id, seq, lastStr, string(data))
 }
 
 func ParseResponseChunkStrict(s string) (ResponseChunk, error) {
@@ -80,8 +84,8 @@ func ParseResponseChunkStrict(s string) (ResponseChunk, error) {
 		return ResponseChunk{}, errors.New("not a response")
 	}
 	rest := strings.TrimPrefix(s, Prefix+"1:")
-	parts := strings.SplitN(rest, ":", 4)
-	if len(parts) != 4 {
+	parts := strings.SplitN(rest, ":", 5)
+	if len(parts) != 5 {
 		return ResponseChunk{}, errors.New("bad response format")
 	}
 	id := parts[0]
@@ -90,11 +94,26 @@ func ParseResponseChunkStrict(s string) (ResponseChunk, error) {
 		return ResponseChunk{}, err
 	}
 	last := parts[2] == "1"
-	data, err := base64.RawURLEncoding.DecodeString(parts[3])
-	if err != nil {
-		return ResponseChunk{}, err
+	encoded := parts[3] == "1"
+	var data []byte
+	if encoded {
+		data, err = base64.RawURLEncoding.DecodeString(parts[4])
+		if err != nil {
+			return ResponseChunk{}, err
+		}
+	} else {
+		data = []byte(parts[4])
 	}
-	return ResponseChunk{ID: id, Seq: seq, Last: last, Data: data}, nil
+	return ResponseChunk{ID: id, Seq: seq, Last: last, Encoded: encoded, Data: data}, nil
+}
+
+func hasNonASCII(b []byte) bool {
+	for _, c := range b {
+		if c >= 0x80 {
+			return true
+		}
+	}
+	return false
 }
 
 type ChunkAck struct {
