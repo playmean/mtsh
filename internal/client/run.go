@@ -65,6 +65,10 @@ func Run(ctx context.Context, dev *mt.Device, cfg Config) error {
 		lastSeq := -1
 		gzipResponse := false
 		var gzipBuf bytes.Buffer
+		var outputBuf bytes.Buffer
+		totalChunks := -1
+		progressShown := false
+		progressEnabled := cfg.ShowProgress && !cfg.StreamChunks
 
 	Processing:
 		for {
@@ -92,6 +96,9 @@ func Run(ctx context.Context, dev *mt.Device, cfg Config) error {
 					continue
 				}
 
+				if ch.Total >= 0 && totalChunks < 0 {
+					totalChunks = ch.Total
+				}
 				if !gotAny {
 					gotAny = true
 				}
@@ -120,12 +127,18 @@ func Run(ctx context.Context, dev *mt.Device, cfg Config) error {
 					}
 					if gzipResponse {
 						gzipBuf.Write(data)
-					} else {
+					} else if cfg.StreamChunks {
 						_, _ = os.Stdout.Write(data)
+					} else {
+						outputBuf.Write(data)
 					}
 					delete(buffer, expectSeq)
 					delete(encodedMap, expectSeq)
 					expectSeq++
+				}
+				if progressEnabled && totalChunks > 1 {
+					renderChunkProgress(expectSeq, totalChunks, false)
+					progressShown = true
 				}
 
 				if waitAck {
@@ -156,6 +169,14 @@ func Run(ctx context.Context, dev *mt.Device, cfg Config) error {
 			}
 		}
 
+		if !cfg.StreamChunks && !gzipResponse {
+			if progressShown && totalChunks > 1 {
+				renderChunkProgress(expectSeq, totalChunks, true)
+			}
+			_, _ = os.Stdout.Write(outputBuf.Bytes())
+		} else if progressShown && totalChunks > 1 {
+			renderChunkProgress(expectSeq, totalChunks, true)
+		}
 		stopTimer(timer)
 		logx.Debugf("client ready for next command")
 	}

@@ -20,14 +20,6 @@ type RequestOptions struct {
 	RequireChunkAck bool
 }
 
-type ResponseChunk struct {
-	ID      string
-	Seq     int
-	Last    bool
-	Encoded bool
-	Data    []byte
-}
-
 func MakeRequest(id, cmd string, opts RequestOptions) string {
 	optStr := encodeRequestOptions(opts)
 	if optStr == "" {
@@ -67,16 +59,29 @@ func ParseRequest(s string) (Request, bool) {
 	}, true
 }
 
-func MakeResponseChunk(id string, seq int, last bool, data []byte) string {
+type ResponseChunk struct {
+	ID      string
+	Seq     int
+	Last    bool
+	Encoded bool
+	Data    []byte
+	Total   int
+}
+
+func MakeResponseChunk(id string, seq int, last bool, total int, data []byte) string {
 	lastStr := "0"
 	if last {
 		lastStr = "1"
 	}
+	totalStr := ""
+	if total >= 0 {
+		totalStr = strconv.Itoa(total)
+	}
 	if hasNonASCII(data) {
 		enc := base64.RawURLEncoding.EncodeToString(data)
-		return fmt.Sprintf("%s1:%s:%d:%s:1:%s", Prefix, id, seq, lastStr, enc)
+		return fmt.Sprintf("%s1:%s:%d:%s:1:%s:%s", Prefix, id, seq, lastStr, totalStr, enc)
 	}
-	return fmt.Sprintf("%s1:%s:%d:%s:0:%s", Prefix, id, seq, lastStr, string(data))
+	return fmt.Sprintf("%s1:%s:%d:%s:0:%s:%s", Prefix, id, seq, lastStr, totalStr, string(data))
 }
 
 func ParseResponseChunkStrict(s string) (ResponseChunk, error) {
@@ -84,8 +89,8 @@ func ParseResponseChunkStrict(s string) (ResponseChunk, error) {
 		return ResponseChunk{}, errors.New("not a response")
 	}
 	rest := strings.TrimPrefix(s, Prefix+"1:")
-	parts := strings.SplitN(rest, ":", 5)
-	if len(parts) != 5 {
+	parts := strings.SplitN(rest, ":", 6)
+	if len(parts) != 5 && len(parts) != 6 {
 		return ResponseChunk{}, errors.New("bad response format")
 	}
 	id := parts[0]
@@ -95,16 +100,29 @@ func ParseResponseChunkStrict(s string) (ResponseChunk, error) {
 	}
 	last := parts[2] == "1"
 	encoded := parts[3] == "1"
+	total := -1
+	var payload string
+	if len(parts) == 5 {
+		payload = parts[4]
+	} else {
+		if parts[4] != "" {
+			total, err = strconv.Atoi(parts[4])
+			if err != nil {
+				return ResponseChunk{}, err
+			}
+		}
+		payload = parts[5]
+	}
 	var data []byte
 	if encoded {
-		data, err = base64.RawURLEncoding.DecodeString(parts[4])
+		data, err = base64.RawURLEncoding.DecodeString(payload)
 		if err != nil {
 			return ResponseChunk{}, err
 		}
 	} else {
-		data = []byte(parts[4])
+		data = []byte(payload)
 	}
-	return ResponseChunk{ID: id, Seq: seq, Last: last, Encoded: encoded, Data: data}, nil
+	return ResponseChunk{ID: id, Seq: seq, Last: last, Encoded: encoded, Data: data, Total: total}, nil
 }
 
 func hasNonASCII(b []byte) bool {

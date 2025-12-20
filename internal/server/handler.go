@@ -17,6 +17,7 @@ func handleRequest(ctx context.Context, dev *mt.Device, cfg Config, req protofmt
 	out := runShell(cfg.Shell, req.Command, cfg.CmdTimeout)
 	payload, compressed := maybeCompressResponse(out)
 	chunks := chunkBytes(payload, cfg.ChunkBytes)
+	totalChunks := len(chunks)
 
 	dest := mt.BroadcastDest
 	var ackCh <-chan chunkAckEvent
@@ -39,7 +40,11 @@ func handleRequest(ctx context.Context, dev *mt.Device, cfg Config, req protofmt
 		last := i == len(chunks)-1
 		attempt := 0
 		for {
-			msg := protofmt.MakeResponseChunk(req.ID, i, last, c)
+			total := -1
+			if i == 0 {
+				total = totalChunks
+			}
+			msg := protofmt.MakeResponseChunk(req.ID, i, last, total, c)
 			if err := dev.SendText(ctx, cfg.Channel, dest, msg); err != nil {
 				logx.Debugf("server failed to send response chunk: id=%s err=%v", req.ID, err)
 				return
