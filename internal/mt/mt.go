@@ -15,26 +15,33 @@ import (
 	pbproto "google.golang.org/protobuf/proto"
 )
 
-const BroadcastDest uint32 = 0xFFFFFFFF
+const (
+	BroadcastDest     uint32 = 0xFFFFFFFF
+	keepAliveInterval        = 30 * time.Second
+	keepAliveDelay           = 3 * time.Minute
+)
 
 type Device struct {
-	D            *meshtastic.Device
-	T            *serialTransport
-	info         NodeDetails
-	ackMu        sync.Mutex
-	ackWaiters   map[uint32]chan *proto.QueueStatus
-	ackTimeout   time.Duration
-	ctx          context.Context
-	textCh       chan RxText
-	errCh        chan error
-	cancel       context.CancelFunc
-	pendingMu    sync.Mutex
-	pending      []RxText
-	flushing     bool
-	flushWg      sync.WaitGroup
-	infoMu       sync.Mutex
-	configLogged bool
-	loggedNodes  map[uint32]bool
+	D              *meshtastic.Device
+	T              *serialTransport
+	info           NodeDetails
+	ackMu          sync.Mutex
+	ackWaiters     map[uint32]chan *proto.QueueStatus
+	ackTimeout     time.Duration
+	ctx            context.Context
+	textCh         chan RxText
+	errCh          chan error
+	cancel         context.CancelFunc
+	pendingMu      sync.Mutex
+	pending        []RxText
+	flushing       bool
+	flushWg        sync.WaitGroup
+	infoMu         sync.Mutex
+	configLogged   bool
+	loggedNodes    map[uint32]bool
+	defaultChannel uint32
+	lastSendMu     sync.Mutex
+	lastSendTime   time.Time
 }
 
 type NodeDetails struct {
@@ -101,17 +108,19 @@ func Open(ctx context.Context, port string, ackTimeout time.Duration) (*Device, 
 	}
 	bgCtx, cancel := context.WithCancel(ctx)
 	dv := &Device{
-		D:          dev,
-		T:          t,
-		info:       info,
-		ackWaiters: make(map[uint32]chan *proto.QueueStatus),
-		ackTimeout: ackTimeout,
-		ctx:        bgCtx,
-		textCh:     make(chan RxText, 128),
-		errCh:      make(chan error, 1),
-		cancel:     cancel,
+		D:            dev,
+		T:            t,
+		info:         info,
+		ackWaiters:   make(map[uint32]chan *proto.QueueStatus),
+		ackTimeout:   ackTimeout,
+		ctx:          bgCtx,
+		textCh:       make(chan RxText, 128),
+		errCh:        make(chan error, 1),
+		cancel:       cancel,
+		lastSendTime: time.Now(),
 	}
 	go dv.readLoop(bgCtx)
+	go dv.keepAliveLoop(bgCtx)
 	return dv, nil
 }
 
@@ -128,6 +137,10 @@ func (d *Device) Close() error {
 
 func (d *Device) Info() NodeDetails {
 	return d.info
+}
+
+func (d *Device) SetDefaultChannel(ch uint32) {
+	d.defaultChannel = ch
 }
 
 type RxText struct {
@@ -180,6 +193,7 @@ func (d *Device) SendText(ctx context.Context, channel uint32, destNode uint32, 
 		logx.Debugf("mt: TX error: %v", err)
 		return err
 	}
+	d.noteSend()
 
 	logx.Debugf("mt: waiting for TX ACK")
 
@@ -473,4 +487,58 @@ func protoCompact(m pbproto.Message) string {
 		return fmt.Sprintf("%T", m)
 	}
 	return string(data)
+}
+
+func (d *Device) keepAliveLoop(ctx context.Context) {
+	if keepAliveInterval <= 0 {
+		return
+	}
+	ticker := time.NewTicker(keepAliveInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if d.timeSinceLastSend() < keepAliveDelay {
+				continue
+			}
+			if err := d.sendPrivateKeepAlive(ctx); err != nil {
+				logx.Debugf("mt: keepalive send failed: %v", err)
+			} else {
+				logx.Debugf("mt: keepalive packet sent: channel=%d", d.defaultChannel)
+			}
+		}
+	}
+}
+
+func (d *Device) sendPrivateKeepAlive(ctx context.Context) error {
+	params := meshtastic.SendDataParams{
+		PortNum:      proto.PortNum_PRIVATE_APP,
+		Payload:      []byte{},
+		DestNodeNum:  BroadcastDest,
+		ChannelIndex: d.defaultChannel,
+		WantAck:      false,
+	}
+	if err := d.D.SendData(ctx, params); err != nil {
+		return err
+	}
+	d.noteSend()
+	return nil
+}
+
+func (d *Device) noteSend() {
+	d.lastSendMu.Lock()
+	d.lastSendTime = time.Now()
+	d.lastSendMu.Unlock()
+}
+
+func (d *Device) timeSinceLastSend() time.Duration {
+	d.lastSendMu.Lock()
+	last := d.lastSendTime
+	d.lastSendMu.Unlock()
+	if last.IsZero() {
+		return keepAliveDelay
+	}
+	return time.Since(last)
 }

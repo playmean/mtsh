@@ -19,6 +19,7 @@ func openDevice(ctx context.Context) (*mt.Device, string, error) {
 		if err != nil {
 			return nil, flagPort, err
 		}
+		dev.SetDefaultChannel(flagChannel)
 		return dev, flagPort, nil
 	}
 
@@ -38,6 +39,7 @@ func openDevice(ctx context.Context) (*mt.Device, string, error) {
 		if err == nil {
 			logx.Debugf("auto-detect selected serial port %s", port)
 			flagPort = port
+			dev.SetDefaultChannel(flagChannel)
 			return dev, port, nil
 		}
 		errs = append(errs, fmt.Errorf("%s: %w", port, err))
