@@ -11,10 +11,14 @@ import (
 )
 
 var (
-	flagPort       string
-	flagChannel    uint32
-	flagChunkBytes int
-	flagAckTimeout time.Duration
+	flagPort            string
+	flagChannel         uint32
+	flagChunkBytes      int
+	flagAckTimeout      time.Duration
+	flagChunkDelay      time.Duration
+	flagChunkAckTimeout time.Duration
+	flagChunkAckRetries int
+	flagNoChunkAck      bool
 
 	flagDedupTTL time.Duration
 	flagDedupCap int
@@ -46,6 +50,10 @@ func init() {
 	rootCmd.PersistentFlags().Uint32Var(&flagChannel, "channel", 0, "Meshtastic channel index (0..)")
 	rootCmd.PersistentFlags().IntVar(&flagChunkBytes, "chunk-bytes", 128, "Max payload bytes per outgoing text message chunk")
 	rootCmd.PersistentFlags().DurationVar(&flagAckTimeout, "ack-timeout", 10*time.Second, "Timeout waiting for radio ACK from Meshtastic device")
+	rootCmd.PersistentFlags().DurationVar(&flagChunkDelay, "chunk-delay", 5*time.Second, "Delay between response chunks when acknowledgments are disabled")
+	rootCmd.PersistentFlags().DurationVar(&flagChunkAckTimeout, "chunk-ack-timeout", 30*time.Second, "Timeout waiting for chunk acknowledgments")
+	rootCmd.PersistentFlags().IntVar(&flagChunkAckRetries, "chunk-ack-retries", 5, "Retries for chunk resend if ACK not received")
+	rootCmd.PersistentFlags().BoolVar(&flagNoChunkAck, "no-chunk-ack", false, "Disable chunk acknowledgments")
 
 	rootCmd.PersistentFlags().DurationVar(&flagDedupTTL, "dedup-ttl", 10*time.Minute, "Deduplication TTL")
 	rootCmd.PersistentFlags().IntVar(&flagDedupCap, "dedup-cap", 2048, "Deduplication LRU capacity")

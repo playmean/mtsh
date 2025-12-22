@@ -20,7 +20,7 @@ const (
 	serialMagicFirst  = 0x94
 	serialMagicSecond = 0xc3
 	serialHeaderSize  = 4
-	serialMaxFrame    = 512
+	serialMaxFrame    = 1024
 	serialReadTimeout = 250 * time.Millisecond
 )
 

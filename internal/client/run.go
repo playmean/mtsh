@@ -91,7 +91,12 @@ func Run(ctx context.Context, dev *mt.Device, cfg Config) error {
 				}
 				logx.Debugf("client received packet candidate: req=%s from=%d hops=%d hopStart=%d hopLimit=%d", reqID, rx.FromNode, rx.Hops, rx.HopStart, rx.HopLimit)
 				ch, err := protofmt.ParseResponseChunkStrict(rx.Text)
-				if err != nil || ch.ID != reqID {
+				if err != nil {
+					logx.Debugf("client failed to parse response chunk: from=%d err=%v text=%q", rx.FromNode, err, rx.Text)
+
+					continue
+				}
+				if ch.ID != reqID {
 					continue
 				}
 

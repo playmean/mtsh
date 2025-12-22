@@ -12,7 +12,6 @@ import (
 
 var (
 	flagWaitTimeout  time.Duration
-	flagChunkAck     bool
 	flagStreamChunks bool
 	flagNoProgress   bool
 )
@@ -37,10 +36,12 @@ var clientCmd = &cobra.Command{
 		logx.Debugf("client connected node: %s", nodeInfo)
 		logx.Debugf("client using wait-timeout=%s", flagWaitTimeout)
 
+		useChunkAck := !flagNoChunkAck
+
 		cfg := client.Config{
 			Channel:      flagChannel,
 			WaitTimeout:  flagWaitTimeout,
-			ChunkAck:     flagChunkAck,
+			ChunkAck:     useChunkAck,
 			StreamChunks: flagStreamChunks,
 			ShowProgress: !flagNoProgress,
 		}
@@ -51,7 +52,6 @@ var clientCmd = &cobra.Command{
 
 func init() {
 	clientCmd.Flags().DurationVar(&flagWaitTimeout, "wait-timeout", 2*time.Minute, "Timeout waiting for remaining response chunks")
-	clientCmd.Flags().BoolVar(&flagChunkAck, "chunk-ack", false, "Request ACK between response chunks")
 	clientCmd.Flags().BoolVar(&flagStreamChunks, "stream-chunks", false, "Print chunks as they arrive (disables progress and buffering)")
 	clientCmd.Flags().BoolVar(&flagNoProgress, "no-progress", false, "Disable chunk download progress for buffered responses")
 }

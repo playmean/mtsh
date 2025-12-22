@@ -11,11 +11,8 @@ import (
 )
 
 var (
-	flagShell           string
-	flagCmdTimeout      time.Duration
-	flagChunkDelay      time.Duration
-	flagChunkAckTimeout time.Duration
-	flagChunkAckRetries int
+	flagShell      string
+	flagCmdTimeout time.Duration
 )
 
 var serverCmd = &cobra.Command{
@@ -47,6 +44,7 @@ var serverCmd = &cobra.Command{
 			ChunkDelay:      flagChunkDelay,
 			ChunkAckTimeout: flagChunkAckTimeout,
 			ChunkAckRetries: flagChunkAckRetries,
+			ChunkAck:        !flagNoChunkAck,
 		}
 
 		return server.Run(ctx, dev, cfg)
@@ -56,7 +54,4 @@ var serverCmd = &cobra.Command{
 func init() {
 	serverCmd.Flags().StringVar(&flagShell, "shell", "sh", "Shell to execute commands")
 	serverCmd.Flags().DurationVar(&flagCmdTimeout, "cmd-timeout", 20*time.Second, "Per-command execution timeout")
-	serverCmd.Flags().DurationVar(&flagChunkDelay, "chunk-delay", 5*time.Second, "Delay between response chunks when client does not request ACK")
-	serverCmd.Flags().DurationVar(&flagChunkAckTimeout, "chunk-ack-timeout", time.Minute, "Timeout waiting for client chunk ACK")
-	serverCmd.Flags().IntVar(&flagChunkAckRetries, "chunk-ack-retries", 3, "Retries for chunk resend if ACK not received")
 }

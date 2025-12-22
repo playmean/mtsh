@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"mtsh/internal/chunks"
 	"mtsh/internal/logx"
 	"mtsh/internal/protofmt"
 )
@@ -66,7 +67,7 @@ func (m *chunkAckManager) deliver(evt chunkAckEvent) bool {
 }
 
 var (
-	errChunkAckTimeout       = errors.New("chunk ack timeout")
+	errChunkAckTimeout       = chunks.ErrAckTimeout
 	errChunkAckChannelClosed = errors.New("chunk ack channel closed")
 )
 
@@ -93,19 +94,5 @@ func waitForClientAck(ctx context.Context, id string, ch <-chan chunkAckEvent, s
 		case <-ctx.Done():
 			return ctx.Err()
 		}
-	}
-}
-
-func sleepWithContext(ctx context.Context, delay time.Duration) error {
-	if delay <= 0 {
-		return nil
-	}
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-timer.C:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
 	}
 }

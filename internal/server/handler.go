@@ -2,12 +2,12 @@ package server
 
 import (
 	"bytes"
-	"compress/gzip"
 	"context"
-	"errors"
 	"os/exec"
+	"strconv"
 	"time"
 
+	"mtsh/internal/chunks"
 	"mtsh/internal/logx"
 	"mtsh/internal/mt"
 	"mtsh/internal/protofmt"
@@ -15,63 +15,33 @@ import (
 
 func handleRequest(ctx context.Context, dev *mt.Device, cfg Config, req protofmt.Request, ackMgr *chunkAckManager) {
 	out := runShell(cfg.Shell, req.Command, cfg.CmdTimeout)
-	payload, compressed := maybeCompressResponse(out)
-	chunks := chunkBytes(payload, cfg.ChunkBytes)
-	totalChunks := len(chunks)
-
-	dest := mt.BroadcastDest
-	var ackCh <-chan chunkAckEvent
-	var ackEnabled bool
-	if req.RequireChunkAck && ackMgr != nil {
-		ackCh = ackMgr.register(req.ID)
-		ackEnabled = true
-		logx.Debugf("server chunk ACKs enabled: id=%s chunks=%d", req.ID, len(chunks))
-		defer ackMgr.unregister(req.ID)
-	} else if req.RequireChunkAck {
-		logx.Debugf("server chunk ACKs requested but manager unavailable: id=%s", req.ID)
+	requireAck := cfg.ChunkAck || req.RequireChunkAck
+	sender, cleanup := newChunkSender(dev, cfg, req, ackMgr, protofmt.ChunkTypeResponse, requireAck)
+	if cleanup != nil {
+		defer cleanup()
 	}
-
-	retryLimit := cfg.ChunkAckRetries
-	if retryLimit <= 0 {
-		retryLimit = 3
+	compressed, err := sender.SendPayload(ctx, req.ID, out, cfg.ChunkBytes, true)
+	if err != nil {
+		logx.Debugf("server failed to send response: id=%s err=%v", req.ID, err)
+		return
 	}
+	logx.Debugf("server sent response chunks: id=%s ack=%v compressed=%v", req.ID, sender.RequireAck, compressed)
+}
 
-	for i, c := range chunks {
-		last := i == len(chunks)-1
-		attempt := 0
-		for {
-			total := -1
-			if i == 0 {
-				total = totalChunks
-			}
-			msg := protofmt.MakeResponseChunk(req.ID, i, last, total, c)
-			if err := dev.SendText(ctx, cfg.Channel, dest, msg); err != nil {
-				logx.Debugf("server failed to send response chunk: id=%s err=%v", req.ID, err)
-				return
-			}
-
-			var waitErr error
-			if ackEnabled {
-				waitErr = waitForClientAck(ctx, req.ID, ackCh, i, cfg.ChunkAckTimeout)
-			} else if !last && cfg.ChunkDelay > 0 {
-				waitErr = sleepWithContext(ctx, cfg.ChunkDelay)
-			}
-
-			if waitErr == nil {
-				break
-			}
-
-			if ackEnabled && errors.Is(waitErr, errChunkAckTimeout) && attempt < retryLimit {
-				attempt++
-				logx.Debugf("server chunk ack timed out, retrying: id=%s seq=%d attempt=%d/%d", req.ID, i, attempt, retryLimit)
-				continue
-			}
-
-			logx.Debugf("server chunk handling failed: id=%s seq=%d err=%v", req.ID, i, waitErr)
-			return
-		}
+func handleFileChunk(ctx context.Context, dev *mt.Device, cfg Config, chunk protofmt.FileChunk) {
+	err := processFileChunk(chunk)
+	if !chunk.RequireAck {
+		return
 	}
-	logx.Debugf("server sent %d chunks for request id=%s ack=%v retries=%d compressed=%v", len(chunks), req.ID, ackEnabled, retryLimit, compressed)
+	respReq := protofmt.Request{ID: chunk.ID}
+	sender, _ := newChunkSender(dev, cfg, respReq, nil, protofmt.ChunkTypeFileAck, false)
+	payload := []byte(strconv.Itoa(chunk.Seq))
+	if err != nil {
+		payload = []byte("[mtsh] cp error: " + err.Error() + "\n")
+	}
+	if sendErr := sender.SendChunk(ctx, chunk.ID, chunk.Seq, chunk.Last, chunk.Total, payload); sendErr != nil {
+		logx.Debugf("server failed to send cp ack: id=%s err=%v", chunk.ID, sendErr)
+	}
 }
 
 func runShell(shell, command string, timeout time.Duration) []byte {
@@ -94,41 +64,44 @@ func runShell(shell, command string, timeout time.Duration) []byte {
 	return buf.Bytes()
 }
 
-func chunkBytes(b []byte, max int) [][]byte {
-	if max <= 0 {
-		max = 180
-	}
-	if len(b) == 0 {
-		return [][]byte{[]byte{}}
-	}
-	var res [][]byte
-	for len(b) > 0 {
-		n := max
-		if len(b) < n {
-			n = len(b)
+func newChunkSender(dev *mt.Device, cfg Config, req protofmt.Request, ackMgr *chunkAckManager, chunkType protofmt.ChunkType, wantAck bool) (chunks.Sender, func()) {
+	builder := func(id string, seq int, last bool, total int, data []byte) string {
+		switch chunkType {
+		case protofmt.ChunkTypeFileAck:
+			return protofmt.MakeFileChunkReply(id, seq, last, total, data)
+		default:
+			return protofmt.MakeResponseChunk(id, seq, last, total, data)
 		}
-		res = append(res, b[:n])
-		b = b[n:]
 	}
-	return res
-}
 
-func maybeCompressResponse(data []byte) ([]byte, bool) {
-	var buf bytes.Buffer
-	zw := gzip.NewWriter(&buf)
-	if _, err := zw.Write(data); err != nil {
-		logx.Debugf("server gzip compression failed, sending raw: err=%v", err)
-		_ = zw.Close()
-		return data, false
+	retries := cfg.ChunkAckRetries
+	if retries <= 0 {
+		retries = 3
 	}
-	if err := zw.Close(); err != nil {
-		logx.Debugf("server gzip close failed, sending raw: err=%v", err)
-		return data, false
+
+	sender := chunks.Sender{
+		Device:     dev,
+		Channel:    cfg.Channel,
+		Builder:    builder,
+		RequireAck: wantAck && ackMgr != nil,
+		AckRetries: retries,
+		ChunkDelay: cfg.ChunkDelay,
 	}
-	if buf.Len() >= len(data) {
-		logx.Debugf("server skipping compression: in=%d out=%d (no gain)", len(data), buf.Len())
-		return data, false
+
+	var cleanup func()
+	if wantAck {
+		if ackMgr == nil {
+			logx.Debugf("server chunk ACKs requested but manager unavailable: id=%s", req.ID)
+			return sender, nil
+		}
+		ackCh := ackMgr.register(req.ID)
+		sender.WaitAck = func(ctx context.Context, seq int, last bool) error {
+			return waitForClientAck(ctx, req.ID, ackCh, seq, cfg.ChunkAckTimeout)
+		}
+		cleanup = func() {
+			ackMgr.unregister(req.ID)
+		}
 	}
-	logx.Debugf("server compressed response: in=%d out=%d", len(data), buf.Len())
-	return buf.Bytes(), true
+
+	return sender, cleanup
 }

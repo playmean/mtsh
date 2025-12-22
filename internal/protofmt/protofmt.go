@@ -68,61 +68,26 @@ type ResponseChunk struct {
 	Total   int
 }
 
+type ChunkType byte
+
+const (
+	ChunkTypeResponse   ChunkType = '1'
+	ChunkTypeFileUpload ChunkType = '2'
+	ChunkTypeFileAck    ChunkType = '3'
+)
+
+var errWrongChunkType = errors.New("wrong chunk type")
+
 func MakeResponseChunk(id string, seq int, last bool, total int, data []byte) string {
-	lastStr := "0"
-	if last {
-		lastStr = "1"
-	}
-	totalStr := ""
-	if total >= 0 {
-		totalStr = strconv.Itoa(total)
-	}
-	if hasNonASCII(data) {
-		enc := base64.RawURLEncoding.EncodeToString(data)
-		return fmt.Sprintf("%s1:%s:%d:%s:1:%s:%s", Prefix, id, seq, lastStr, totalStr, enc)
-	}
-	return fmt.Sprintf("%s1:%s:%d:%s:0:%s:%s", Prefix, id, seq, lastStr, totalStr, string(data))
+	return makeChunk(ChunkTypeResponse, id, seq, last, total, data)
 }
 
 func ParseResponseChunkStrict(s string) (ResponseChunk, error) {
-	if !strings.HasPrefix(s, Prefix+"1:") {
+	ch, err := parseChunk(ChunkTypeResponse, s)
+	if errors.Is(err, errWrongChunkType) {
 		return ResponseChunk{}, errors.New("not a response")
 	}
-	rest := strings.TrimPrefix(s, Prefix+"1:")
-	parts := strings.SplitN(rest, ":", 6)
-	if len(parts) != 5 && len(parts) != 6 {
-		return ResponseChunk{}, errors.New("bad response format")
-	}
-	id := parts[0]
-	seq, err := strconv.Atoi(parts[1])
-	if err != nil {
-		return ResponseChunk{}, err
-	}
-	last := parts[2] == "1"
-	encoded := parts[3] == "1"
-	total := -1
-	var payload string
-	if len(parts) == 5 {
-		payload = parts[4]
-	} else {
-		if parts[4] != "" {
-			total, err = strconv.Atoi(parts[4])
-			if err != nil {
-				return ResponseChunk{}, err
-			}
-		}
-		payload = parts[5]
-	}
-	var data []byte
-	if encoded {
-		data, err = base64.RawURLEncoding.DecodeString(payload)
-		if err != nil {
-			return ResponseChunk{}, err
-		}
-	} else {
-		data = []byte(payload)
-	}
-	return ResponseChunk{ID: id, Seq: seq, Last: last, Encoded: encoded, Data: data, Total: total}, nil
+	return ch, err
 }
 
 func hasNonASCII(b []byte) bool {
@@ -181,4 +146,169 @@ func decodeRequestOptions(s string) RequestOptions {
 		}
 	}
 	return opts
+}
+
+type FileChunk struct {
+	ID         string
+	Seq        int
+	Last       bool
+	Total      int
+	Path       string
+	Data       []byte
+	RequireAck bool
+	Compressed bool
+}
+
+var (
+	ErrNotFileChunk      = errors.New("not a file chunk")
+	ErrNotFileChunkReply = errors.New("not a file chunk reply")
+)
+
+func MakeFileChunkUpload(id string, seq int, last bool, total int, path string, data []byte, compressed bool, requireAck bool) string {
+	lastStr := "0"
+	if last {
+		lastStr = "1"
+	}
+	totalStr := ""
+	if total >= 0 {
+		totalStr = strconv.Itoa(total)
+	}
+	payload := string(data)
+	encoded := "0"
+	if hasNonASCII(data) {
+		encoded = "1"
+		payload = base64.RawURLEncoding.EncodeToString(data)
+	}
+	ackStr := "0"
+	if requireAck {
+		ackStr = "1"
+	}
+	compStr := "0"
+	if compressed {
+		compStr = "1"
+	}
+	pathEnc := base64.RawURLEncoding.EncodeToString([]byte(path))
+	return fmt.Sprintf("%s2:%s:%d:%s:%s:%s:%s:%s:%s:%s", Prefix, id, seq, lastStr, encoded, totalStr, ackStr, compStr, pathEnc, payload)
+}
+
+func ParseFileChunkUpload(s string) (FileChunk, error) {
+	prefix := Prefix + "2:"
+	if !strings.HasPrefix(s, prefix) {
+		return FileChunk{}, ErrNotFileChunk
+	}
+	rest := strings.TrimPrefix(s, prefix)
+	parts := strings.SplitN(rest, ":", 9)
+	if len(parts) != 9 {
+		return FileChunk{}, errors.New("bad file chunk format")
+	}
+	id := parts[0]
+	seq, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return FileChunk{}, err
+	}
+	last := parts[2] == "1"
+	encoded := parts[3] == "1"
+	total := -1
+	if parts[4] != "" {
+		total, err = strconv.Atoi(parts[4])
+		if err != nil {
+			return FileChunk{}, err
+		}
+	}
+	requireAck := parts[5] == "1"
+	compressed := parts[6] == "1"
+	pathBytes, err := base64.RawURLEncoding.DecodeString(parts[7])
+	if err != nil {
+		return FileChunk{}, err
+	}
+	payload := parts[8]
+	var data []byte
+	if encoded {
+		data, err = base64.RawURLEncoding.DecodeString(payload)
+		if err != nil {
+			return FileChunk{}, err
+		}
+	} else {
+		data = []byte(payload)
+	}
+	return FileChunk{
+		ID:         id,
+		Seq:        seq,
+		Last:       last,
+		Total:      total,
+		Path:       string(pathBytes),
+		Data:       data,
+		RequireAck: requireAck,
+		Compressed: compressed,
+	}, nil
+}
+
+func MakeFileChunkReply(id string, seq int, last bool, total int, data []byte) string {
+	return makeChunk(ChunkTypeFileAck, id, seq, last, total, data)
+}
+
+func ParseFileChunkReply(s string) (ResponseChunk, error) {
+	ch, err := parseChunk(ChunkTypeFileAck, s)
+	if errors.Is(err, errWrongChunkType) {
+		return ResponseChunk{}, ErrNotFileChunkReply
+	}
+	return ch, err
+}
+
+func makeChunk(kind ChunkType, id string, seq int, last bool, total int, data []byte) string {
+	lastStr := "0"
+	if last {
+		lastStr = "1"
+	}
+	totalStr := ""
+	if total >= 0 {
+		totalStr = strconv.Itoa(total)
+	}
+	if hasNonASCII(data) {
+		enc := base64.RawURLEncoding.EncodeToString(data)
+		return fmt.Sprintf("%s%c:%s:%d:%s:1:%s:%s", Prefix, kind, id, seq, lastStr, totalStr, enc)
+	}
+	return fmt.Sprintf("%s%c:%s:%d:%s:0:%s:%s", Prefix, kind, id, seq, lastStr, totalStr, string(data))
+}
+
+func parseChunk(kind ChunkType, s string) (ResponseChunk, error) {
+	prefix := fmt.Sprintf("%s%c:", Prefix, kind)
+	if !strings.HasPrefix(s, prefix) {
+		return ResponseChunk{}, errWrongChunkType
+	}
+	rest := strings.TrimPrefix(s, prefix)
+	parts := strings.SplitN(rest, ":", 6)
+	if len(parts) != 5 && len(parts) != 6 {
+		return ResponseChunk{}, errors.New("bad response format")
+	}
+	id := parts[0]
+	seq, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return ResponseChunk{}, err
+	}
+	last := parts[2] == "1"
+	encoded := parts[3] == "1"
+	total := -1
+	var payload string
+	if len(parts) == 5 {
+		payload = parts[4]
+	} else {
+		if parts[4] != "" {
+			total, err = strconv.Atoi(parts[4])
+			if err != nil {
+				return ResponseChunk{}, err
+			}
+		}
+		payload = parts[5]
+	}
+	var data []byte
+	if encoded {
+		data, err = base64.RawURLEncoding.DecodeString(payload)
+		if err != nil {
+			return ResponseChunk{}, err
+		}
+	} else {
+		data = []byte(payload)
+	}
+	return ResponseChunk{ID: id, Seq: seq, Last: last, Encoded: encoded, Data: data, Total: total}, nil
 }

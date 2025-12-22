@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"mtsh/internal/logx"
@@ -45,6 +46,14 @@ func Run(ctx context.Context, dev *mt.Device, cfg Config) error {
 			} else {
 				logx.Debugf("server got unexpected chunk ack: id=%s seq=%d from=%d", ack.ID, ack.Seq, rx.FromNode)
 			}
+			continue
+		}
+
+		if chunk, err := protofmt.ParseFileChunkUpload(rx.Text); err == nil {
+			handleFileChunk(ctx, dev, cfg, chunk)
+			continue
+		} else if !errors.Is(err, protofmt.ErrNotFileChunk) {
+			logx.Debugf("server invalid file chunk: %v", err)
 			continue
 		}
 

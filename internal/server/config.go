@@ -13,4 +13,5 @@ type Config struct {
 	ChunkDelay      time.Duration
 	ChunkAckTimeout time.Duration
 	ChunkAckRetries int
+	ChunkAck        bool
 }
