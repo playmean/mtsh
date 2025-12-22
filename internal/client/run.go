@@ -67,7 +67,6 @@ func Run(ctx context.Context, dev *mt.Device, cfg Config) error {
 		var gzipBuf bytes.Buffer
 		var outputBuf bytes.Buffer
 		totalChunks := -1
-		progressShown := false
 		progressEnabled := cfg.ShowProgress && !cfg.StreamChunks
 
 	Processing:
@@ -136,16 +135,17 @@ func Run(ctx context.Context, dev *mt.Device, cfg Config) error {
 					delete(encodedMap, expectSeq)
 					expectSeq++
 				}
-				if progressEnabled && totalChunks > 1 {
-					renderChunkProgress(expectSeq, totalChunks, false)
-					progressShown = true
+				completed := ch.Last && lastSeq >= 0 && expectSeq > lastSeq
+
+				if progressEnabled && totalChunks > 1 && !completed {
+					renderChunkProgress(expectSeq, totalChunks, rx.Hops)
 				}
 
 				if waitAck {
 					sendChunkAck(ctx, dev, cfg.Channel, reqID, ch.Seq)
 				}
 
-				if ch.Last && lastSeq >= 0 && expectSeq > lastSeq {
+				if completed {
 					if gzipResponse {
 						if err := flushGzipBuffer(&gzipBuf); err != nil {
 							fmt.Fprintf(os.Stderr, "[mtsh] failed to decompress response: %v\n", err)
@@ -170,12 +170,7 @@ func Run(ctx context.Context, dev *mt.Device, cfg Config) error {
 		}
 
 		if !cfg.StreamChunks && !gzipResponse {
-			if progressShown && totalChunks > 1 {
-				renderChunkProgress(expectSeq, totalChunks, true)
-			}
 			_, _ = os.Stdout.Write(outputBuf.Bytes())
-		} else if progressShown && totalChunks > 1 {
-			renderChunkProgress(expectSeq, totalChunks, true)
 		}
 		stopTimer(timer)
 		logx.Debugf("client ready for next command")

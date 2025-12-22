@@ -5,17 +5,14 @@ import (
 	"os"
 )
 
-func renderChunkProgress(processed, total int, done bool) {
+func renderChunkProgress(processed, total int, hops uint32) {
 	if total <= 0 {
 		return
 	}
+
 	if processed > total {
 		processed = total
 	}
-	msg := fmt.Sprintf("[mtsh] chunks %d/%d", processed, total)
-	if done {
-		fmt.Fprintf(os.Stderr, "\r%s\n", msg)
-	} else {
-		fmt.Fprintf(os.Stderr, "\r%s", msg)
-	}
+
+	fmt.Fprintf(os.Stderr, "[mtsh] chunks %d/%d hops=%d\n", processed, total, hops)
 }
