@@ -49,6 +49,15 @@ func Run(ctx context.Context, dev *mt.Device, cfg Config) error {
 			continue
 		}
 
+		if cancelID, ok := protofmt.ParseCancel(rx.Text); ok {
+			if reqCancels.cancel(cancelID) {
+				logx.Debugf("server canceled request: id=%s from=%d", cancelID, rx.FromNode)
+			} else {
+				logx.Debugf("server ignoring cancel for unknown request: id=%s from=%d", cancelID, rx.FromNode)
+			}
+			continue
+		}
+
 		if chunk, err := protofmt.ParseFileChunkUpload(rx.Text); err == nil {
 			handleFileChunk(ctx, dev, cfg, chunk)
 			continue

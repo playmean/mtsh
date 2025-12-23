@@ -167,6 +167,7 @@ func Run(ctx context.Context, dev *mt.Device, cfg Config) error {
 			case <-sigCh:
 				if !ctrlCUsed {
 					ctrlCUsed = true
+					sendCancel(ctx, dev, cfg.Channel, reqID)
 					fmt.Fprintln(os.Stderr, "\n[mtsh] response canceled by Ctrl+C (press Ctrl+C again to exit)")
 					break Processing
 				}

@@ -46,3 +46,16 @@ func (rc *requestCanceler) cancelAll() {
 		cancel()
 	}
 }
+
+func (rc *requestCanceler) cancel(id string) bool {
+	rc.mu.Lock()
+	entry, ok := rc.cancels[id]
+	if ok {
+		delete(rc.cancels, id)
+	}
+	rc.mu.Unlock()
+	if ok {
+		entry.cancel()
+	}
+	return ok
+}

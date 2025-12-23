@@ -29,6 +29,15 @@ func sendChunkAck(ctx context.Context, dev *mt.Device, channel uint32, reqID str
 	logx.Debugf("client sent chunk ack: id=%s seq=%d", reqID, seq)
 }
 
+func sendCancel(ctx context.Context, dev *mt.Device, channel uint32, reqID string) {
+	msg := protofmt.MakeCancel(reqID)
+	if err := dev.SendText(ctx, channel, mt.BroadcastDest, msg); err != nil {
+		logx.Debugf("client failed to send cancel: id=%s err=%v", reqID, err)
+		return
+	}
+	logx.Debugf("client sent cancel: id=%s", reqID)
+}
+
 func looksLikeGzip(b []byte) bool {
 	return len(b) >= 2 && b[0] == 0x1f && b[1] == 0x8b
 }

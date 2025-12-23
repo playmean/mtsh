@@ -124,6 +124,21 @@ func ParseChunkAck(s string) (ChunkAck, bool) {
 	return ChunkAck{ID: parts[0], Seq: seq}, true
 }
 
+func MakeCancel(id string) string {
+	return fmt.Sprintf("%scancel:%s", Prefix, id)
+}
+
+func ParseCancel(s string) (string, bool) {
+	if !strings.HasPrefix(s, Prefix+"cancel:") {
+		return "", false
+	}
+	id := strings.TrimPrefix(s, Prefix+"cancel:")
+	if id == "" {
+		return "", false
+	}
+	return id, true
+}
+
 func encodeRequestOptions(opts RequestOptions) string {
 	var tokens []string
 	if opts.RequireChunkAck {
