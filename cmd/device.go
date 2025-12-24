@@ -20,6 +20,7 @@ func openDevice(ctx context.Context) (*mt.Device, string, error) {
 			return nil, flagPort, err
 		}
 		dev.SetDefaultChannel(flagChannel)
+		dev.SetHopLimit(flagHopLimit)
 		return dev, flagPort, nil
 	}
 
@@ -40,6 +41,7 @@ func openDevice(ctx context.Context) (*mt.Device, string, error) {
 			logx.Debugf("auto-detect selected serial port %s", port)
 			flagPort = port
 			dev.SetDefaultChannel(flagChannel)
+			dev.SetHopLimit(flagHopLimit)
 			return dev, port, nil
 		}
 		errs = append(errs, fmt.Errorf("%s: %w", port, err))

@@ -19,6 +19,7 @@ const (
 	BroadcastDest     uint32 = 0xFFFFFFFF
 	keepAliveInterval        = 30 * time.Second
 	keepAliveDelay           = 3 * time.Minute
+	defaultHopLimit          = 6
 )
 
 type Device struct {
@@ -40,6 +41,7 @@ type Device struct {
 	configLogged   bool
 	loggedNodes    map[uint32]bool
 	defaultChannel uint32
+	hopLimit       uint32
 	lastSendMu     sync.Mutex
 	lastSendTime   time.Time
 }
@@ -143,6 +145,10 @@ func (d *Device) SetDefaultChannel(ch uint32) {
 	d.defaultChannel = ch
 }
 
+func (d *Device) SetHopLimit(limit uint32) {
+	d.hopLimit = limit
+}
+
 type RxText struct {
 	FromNode uint32
 	ToNode   uint32 // 0 or broadcast / depends on packet
@@ -180,6 +186,10 @@ func (d *Device) SendText(ctx context.Context, channel uint32, destNode uint32, 
 		Portnum: proto.PortNum_TEXT_MESSAGE_APP,
 		Payload: []byte(text),
 	}
+	hopLimit := d.hopLimit
+	if hopLimit == 0 {
+		hopLimit = defaultHopLimit
+	}
 	packet := &proto.MeshPacket{
 		To:      destNode,
 		Channel: channel,
@@ -187,7 +197,7 @@ func (d *Device) SendText(ctx context.Context, channel uint32, destNode uint32, 
 			Decoded: data,
 		},
 		WantAck:  true,
-		HopLimit: 6,
+		HopLimit: hopLimit,
 	}
 	if err := d.D.SendToMesh(ctx, packet); err != nil {
 		logx.Debugf("mt: TX error: %v", err)
