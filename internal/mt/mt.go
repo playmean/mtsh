@@ -40,6 +40,7 @@ type Device struct {
 	infoMu         sync.Mutex
 	configLogged   bool
 	loggedNodes    map[uint32]bool
+	savedNodes     []*proto.NodeInfo
 	defaultChannel uint32
 	hopLimit       uint32
 	lastSendMu     sync.Mutex
@@ -113,6 +114,7 @@ func Open(ctx context.Context, port string, ackTimeout time.Duration) (*Device, 
 		D:            dev,
 		T:            t,
 		info:         info,
+		savedNodes:   append([]*proto.NodeInfo(nil), state.Nodes...),
 		ackWaiters:   make(map[uint32]chan *proto.QueueStatus),
 		ackTimeout:   ackTimeout,
 		ctx:          bgCtx,
@@ -139,6 +141,12 @@ func (d *Device) Close() error {
 
 func (d *Device) Info() NodeDetails {
 	return d.info
+}
+
+func (d *Device) SavedNodes() []*proto.NodeInfo {
+	nodes := make([]*proto.NodeInfo, len(d.savedNodes))
+	copy(nodes, d.savedNodes)
+	return nodes
 }
 
 func (d *Device) SetDefaultChannel(ch uint32) {
