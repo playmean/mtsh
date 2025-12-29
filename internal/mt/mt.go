@@ -10,9 +10,11 @@ import (
 	"mtsh/internal/logx"
 
 	meshtastic "github.com/exepirit/meshtastic-go/pkg/meshtastic"
+	"github.com/exepirit/meshtastic-go/pkg/meshtastic/connect"
 	"github.com/exepirit/meshtastic-go/pkg/meshtastic/proto"
 	"google.golang.org/protobuf/encoding/protojson"
 	pbproto "google.golang.org/protobuf/proto"
+	"tinygo.org/x/bluetooth"
 )
 
 const (
@@ -20,12 +22,14 @@ const (
 	keepAliveInterval        = 30 * time.Second
 	keepAliveDelay           = 3 * time.Minute
 	defaultHopLimit          = 6
+	bleConnectTimeout        = 20 * time.Second
 )
 
 type Device struct {
 	D              *meshtastic.Device
-	T              *serialTransport
+	T              meshtastic.HardwareTransport
 	info           NodeDetails
+	transportName  string
 	ackMu          sync.Mutex
 	ackWaiters     map[uint32]chan *proto.QueueStatus
 	ackTimeout     time.Duration
@@ -88,40 +92,40 @@ func (n NodeDetails) String() string {
 }
 
 func Open(ctx context.Context, port string, ackTimeout time.Duration) (*Device, error) {
-	logx.Debugf("mt: opening serial port %s", port)
-	t, err := newSerialTransport(port)
+	t, transportName, err := openTransport(port)
 	if err != nil {
-		logx.Debugf("mt: serial transport error on %s: %v", port, err)
+		logx.Debugf("mt: transport error on %s: %v", transportName, err)
 		return nil, err
 	}
 	dev := &meshtastic.Device{Transport: t}
 	state, err := dev.Config().GetState(ctx)
 	if err != nil {
-		_ = t.Close()
-		logx.Debugf("mt: device configuration error on %s: %v", port, err)
+		_ = connect.CloseTransport(t)
+		logx.Debugf("mt: device configuration error on %s: %v", transportName, err)
 		return nil, err
 	}
 	if state.MyInfo != nil {
 		dev.NodeID = state.MyInfo.GetMyNodeNum()
 	}
 	info := buildNodeDetails(state)
-	logx.Debugf("mt: device ready on port %s (node=%d)", port, info.Number)
+	logx.Debugf("mt: device ready on %s (node=%d)", transportName, info.Number)
 	if ackTimeout <= 0 {
 		ackTimeout = 20 * time.Second
 	}
 	bgCtx, cancel := context.WithCancel(ctx)
 	dv := &Device{
-		D:            dev,
-		T:            t,
-		info:         info,
-		savedNodes:   append([]*proto.NodeInfo(nil), state.Nodes...),
-		ackWaiters:   make(map[uint32]chan *proto.QueueStatus),
-		ackTimeout:   ackTimeout,
-		ctx:          bgCtx,
-		textCh:       make(chan RxText, 128),
-		errCh:        make(chan error, 1),
-		cancel:       cancel,
-		lastSendTime: time.Now(),
+		D:             dev,
+		T:             t,
+		info:          info,
+		transportName: transportName,
+		savedNodes:    append([]*proto.NodeInfo(nil), state.Nodes...),
+		ackWaiters:    make(map[uint32]chan *proto.QueueStatus),
+		ackTimeout:    ackTimeout,
+		ctx:           bgCtx,
+		textCh:        make(chan RxText, 128),
+		errCh:         make(chan error, 1),
+		cancel:        cancel,
+		lastSendTime:  time.Now(),
 	}
 	go dv.readLoop(bgCtx)
 	go dv.keepAliveLoop(bgCtx)
@@ -133,10 +137,61 @@ func (d *Device) Close() error {
 		d.cancel()
 	}
 	if d.T != nil {
-		logx.Debugf("mt: closing serial transport")
-		return d.T.Close()
+		logx.Debugf("mt: closing transport %s", d.transportName)
+		return connect.CloseTransport(d.T)
 	}
 	return nil
+}
+
+func openTransport(target string) (meshtastic.HardwareTransport, string, error) {
+	if isBLETarget(target) {
+		normalized := normalizeBLETarget(target)
+		if err := enableBLEAdapter(); err != nil {
+			return nil, normalized, err
+		}
+		logx.Debugf("mt: opening BLE transport %s", normalized)
+		t, err := openBLETransport(normalized, bleConnectTimeout)
+		return t, normalized, err
+	}
+	logx.Debugf("mt: opening serial port %s", target)
+	t, err := newSerialTransport(target)
+	return t, target, err
+}
+
+func isBLETarget(target string) bool {
+	return strings.HasPrefix(strings.ToLower(target), "ble:")
+}
+
+func normalizeBLETarget(target string) string {
+	if strings.HasPrefix(strings.ToLower(target), "ble://") {
+		return target
+	}
+	return "ble://" + strings.TrimPrefix(target, "ble:")
+}
+
+func enableBLEAdapter() error {
+	if err := bluetooth.DefaultAdapter.Enable(); err != nil {
+		return fmt.Errorf("enable BLE adapter: %w", err)
+	}
+	return nil
+}
+
+func openBLETransport(target string, timeout time.Duration) (meshtastic.HardwareTransport, error) {
+	type result struct {
+		transport meshtastic.HardwareTransport
+		err       error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		transport, err := connect.NewTransport(target)
+		ch <- result{transport: transport, err: err}
+	}()
+	select {
+	case res := <-ch:
+		return res.transport, res.err
+	case <-time.After(timeout):
+		return nil, fmt.Errorf("BLE connection timeout after %s", timeout)
+	}
 }
 
 func (d *Device) Info() NodeDetails {

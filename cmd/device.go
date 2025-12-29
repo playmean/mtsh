@@ -29,7 +29,7 @@ func openDevice(ctx context.Context) (*mt.Device, string, error) {
 		return nil, "", fmt.Errorf("list serial ports: %w", err)
 	}
 	if len(ports) == 0 {
-		return nil, "", fmt.Errorf("no serial ports detected; connect your Meshtastic device or pass --port")
+		return nil, "", fmt.Errorf("no serial ports detected; connect your Meshtastic device or pass --port (e.g. ble://00:11:22:33:44:55)")
 	}
 
 	sort.Sort(sort.Reverse(sort.StringSlice(ports)))
