@@ -28,8 +28,15 @@ func Run(ctx context.Context, dev *mt.Device, cfg Config) error {
 			return fmt.Errorf("serial read error: %w", err)
 		}
 
+		if len(cfg.DmWhitelist) > 0 {
+			if _, ok := cfg.DmWhitelist[rx.FromNode]; !ok {
+				logx.Debugf("server dropping packet from non-whitelisted node: from=%d", rx.FromNode)
+				continue
+			}
+		}
+
 		isDM := rx.ToNode == dev.Info().Number
-		if cfg.DmOnly {
+		if !cfg.AllowChannel {
 			if !isDM {
 				logx.Debugf("server dropping non-DM packet: from=%d to=%d channel=%d", rx.FromNode, rx.ToNode, rx.Channel)
 				continue
