@@ -28,9 +28,19 @@ func Run(ctx context.Context, dev *mt.Device, cfg Config) error {
 			return fmt.Errorf("serial read error: %w", err)
 		}
 
-		if rx.Channel != cfg.Channel {
-			logx.Debugf("server dropping packet from channel %d (want %d)", rx.Channel, cfg.Channel)
-			continue
+		isDM := rx.ToNode == dev.Info().Number
+		if cfg.DmOnly {
+			if !isDM {
+				logx.Debugf("server dropping non-DM packet: from=%d to=%d channel=%d", rx.FromNode, rx.ToNode, rx.Channel)
+				continue
+			}
+		} else if rx.Channel != cfg.Channel {
+			if rx.Channel == 0 && isDM {
+				logx.Debugf("server accepting direct message on channel 0 for node=%d", rx.ToNode)
+			} else {
+				logx.Debugf("server dropping packet from channel %d (want %d)", rx.Channel, cfg.Channel)
+				continue
+			}
 		}
 
 		if ack, ok := protofmt.ParseChunkAck(rx.Text); ok {
@@ -59,7 +69,7 @@ func Run(ctx context.Context, dev *mt.Device, cfg Config) error {
 		}
 
 		if chunk, err := protofmt.ParseFileChunkUpload(rx.Text); err == nil {
-			handleFileChunk(ctx, dev, cfg, chunk)
+			handleFileChunk(ctx, dev, cfg, chunk, rx.FromNode)
 			continue
 		} else if !errors.Is(err, protofmt.ErrNotFileChunk) {
 			logx.Debugf("server invalid file chunk: %v", err)
@@ -82,11 +92,15 @@ func Run(ctx context.Context, dev *mt.Device, cfg Config) error {
 		cleanup := reqCancels.register(req.ID, cancel)
 
 		logx.Debugf("server received request: id=%s from=%d hops=%d hopStart=%d hopLimit=%d", req.ID, rx.FromNode, rx.Hops, rx.HopStart, rx.HopLimit)
+		respDest := mt.BroadcastDest
+		if rx.ToNode != 0 && rx.ToNode != mt.BroadcastDest {
+			respDest = rx.FromNode
+		}
 
 		go func() {
 			defer cleanup()
 			defer cancel()
-			handleRequest(reqCtx, dev, cfg, req, ackMgr)
+			handleRequest(reqCtx, dev, cfg, req, ackMgr, respDest)
 		}()
 	}
 }

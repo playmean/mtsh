@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	"mtsh/internal/logx"
@@ -25,6 +26,7 @@ var (
 	flagDedupCap int
 
 	flagVerbose bool
+	flagTo      string
 )
 
 var rootCmd = &cobra.Command{
@@ -60,7 +62,16 @@ func init() {
 	rootCmd.PersistentFlags().DurationVar(&flagDedupTTL, "dedup-ttl", 10*time.Minute, "Deduplication TTL")
 	rootCmd.PersistentFlags().IntVar(&flagDedupCap, "dedup-cap", 2048, "Deduplication LRU capacity")
 	rootCmd.PersistentFlags().BoolVarP(&flagVerbose, "verbose", "v", false, "Enable verbose debug logging")
+	rootCmd.PersistentFlags().StringVar(&flagTo, "to", "0xffffffff", "Destination node number (decimal or hex, default broadcast)")
 
 	rootCmd.AddCommand(serverCmd)
 	rootCmd.AddCommand(clientCmd)
+}
+
+func parseNodeNumber(raw string) (uint32, error) {
+	n, err := strconv.ParseUint(raw, 0, 32)
+	if err != nil {
+		return 0, fmt.Errorf("invalid destination %q (want decimal or hex)", raw)
+	}
+	return uint32(n), nil
 }

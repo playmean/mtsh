@@ -20,18 +20,24 @@ func randID() string {
 	return hex.EncodeToString(x[:])
 }
 
-func sendChunkAck(ctx context.Context, dev *mt.Device, channel uint32, reqID string, seq int) {
+func sendChunkAck(ctx context.Context, dev *mt.Device, channel uint32, dest uint32, reqID string, seq int) {
 	msg := protofmt.MakeChunkAck(reqID, seq)
-	if err := dev.SendText(ctx, channel, mt.BroadcastDest, msg); err != nil {
+	if dest == 0 {
+		dest = mt.BroadcastDest
+	}
+	if err := dev.SendText(ctx, channel, dest, msg); err != nil {
 		logx.Debugf("client failed to send chunk ack: id=%s seq=%d err=%v", reqID, seq, err)
 		return
 	}
 	logx.Debugf("client sent chunk ack: id=%s seq=%d", reqID, seq)
 }
 
-func sendCancel(ctx context.Context, dev *mt.Device, channel uint32, reqID string) {
+func sendCancel(ctx context.Context, dev *mt.Device, channel uint32, dest uint32, reqID string) {
 	msg := protofmt.MakeCancel(reqID)
-	if err := dev.SendText(ctx, channel, mt.BroadcastDest, msg); err != nil {
+	if dest == 0 {
+		dest = mt.BroadcastDest
+	}
+	if err := dev.SendText(ctx, channel, dest, msg); err != nil {
 		logx.Debugf("client failed to send cancel: id=%s err=%v", reqID, err)
 		return
 	}

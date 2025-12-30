@@ -28,6 +28,10 @@ var cpCmd = &cobra.Command{
 		src := args[0]
 		dest := args[1]
 		ctx := cmd.Context()
+		nodeDest, err := parseNodeNumber(flagTo)
+		if err != nil {
+			return err
+		}
 
 		dev, port, err := openDevice(ctx)
 		if err != nil {
@@ -35,10 +39,10 @@ var cpCmd = &cobra.Command{
 		}
 		defer dev.Close()
 
-		fmt.Printf("cp: port=%s channel=%d wait-timeout=%s\n", port, flagChannel, flagWaitTimeout)
+		fmt.Printf("cp: port=%s channel=%d dest=%d wait-timeout=%s\n", port, flagChannel, nodeDest, flagWaitTimeout)
 		fmt.Printf("node: %s\n", dev.Info())
 
-		return runCopy(ctx, dev, src, dest)
+		return runCopy(ctx, dev, src, dest, nodeDest)
 	},
 }
 
@@ -46,7 +50,7 @@ func init() {
 	rootCmd.AddCommand(cpCmd)
 }
 
-func runCopy(ctx context.Context, dev *mt.Device, src, dest string) error {
+func runCopy(ctx context.Context, dev *mt.Device, src, dest string, nodeDest uint32) error {
 	info, err := os.Stat(src)
 	if err != nil {
 		return fmt.Errorf("stat source: %w", err)
@@ -97,6 +101,7 @@ func runCopy(ctx context.Context, dev *mt.Device, src, dest string) error {
 	sender := chunks.Sender{
 		Device:     dev,
 		Channel:    flagChannel,
+		Dest:       nodeDest,
 		Builder:    builder,
 		RequireAck: useChunkAck,
 		AckRetries: flagChunkAckRetries,

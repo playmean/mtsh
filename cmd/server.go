@@ -13,6 +13,7 @@ import (
 var (
 	flagShell      string
 	flagCmdTimeout time.Duration
+	flagDmOnly     bool
 )
 
 var serverCmd = &cobra.Command{
@@ -36,6 +37,7 @@ var serverCmd = &cobra.Command{
 
 		cfg := server.Config{
 			Channel:         flagChannel,
+			DmOnly:          flagDmOnly,
 			DedupTTL:        flagDedupTTL,
 			DedupCap:        flagDedupCap,
 			Shell:           flagShell,
@@ -54,4 +56,5 @@ var serverCmd = &cobra.Command{
 func init() {
 	serverCmd.Flags().StringVar(&flagShell, "shell", "sh", "Shell to execute commands")
 	serverCmd.Flags().DurationVar(&flagCmdTimeout, "cmd-timeout", 20*time.Second, "Per-command execution timeout")
+	serverCmd.Flags().BoolVar(&flagDmOnly, "dm-only", false, "Accept only direct messages addressed to this node")
 }

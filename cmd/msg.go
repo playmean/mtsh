@@ -2,13 +2,10 @@ package cmd
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
 )
-
-var flagMsgDest string
 
 var msgCmd = &cobra.Command{
 	Use:   "msg <message>",
@@ -17,7 +14,7 @@ var msgCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := cmd.Context()
 		message := strings.Join(args, " ")
-		dest, err := parseNodeNumber(flagMsgDest)
+		dest, err := parseNodeNumber(flagTo)
 		if err != nil {
 			return err
 		}
@@ -36,14 +33,5 @@ var msgCmd = &cobra.Command{
 }
 
 func init() {
-	msgCmd.Flags().StringVar(&flagMsgDest, "to", "0xffffffff", "Destination node number (decimal or hex, default broadcast)")
 	rootCmd.AddCommand(msgCmd)
-}
-
-func parseNodeNumber(raw string) (uint32, error) {
-	n, err := strconv.ParseUint(raw, 0, 32)
-	if err != nil {
-		return 0, fmt.Errorf("invalid destination %q (want decimal or hex)", raw)
-	}
-	return uint32(n), nil
 }

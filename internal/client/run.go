@@ -22,7 +22,7 @@ func Run(ctx context.Context, dev *mt.Device, cfg Config) error {
 	defer signal.Stop(sigCh)
 	var ctrlCUsed bool
 
-	dest := mt.BroadcastDest
+	dest := cfg.Dest
 
 	rxCh := make(chan mt.RxText, 128)
 	errCh := make(chan error, 1)
@@ -113,7 +113,7 @@ func Run(ctx context.Context, dev *mt.Device, cfg Config) error {
 
 				if ch.Seq < expectSeq {
 					if waitAck {
-						sendChunkAck(ctx, dev, cfg.Channel, reqID, ch.Seq)
+						sendChunkAck(ctx, dev, cfg.Channel, rx.FromNode, reqID, ch.Seq)
 					}
 					continue
 				}
@@ -147,7 +147,7 @@ func Run(ctx context.Context, dev *mt.Device, cfg Config) error {
 				}
 
 				if waitAck {
-					sendChunkAck(ctx, dev, cfg.Channel, reqID, ch.Seq)
+					sendChunkAck(ctx, dev, cfg.Channel, rx.FromNode, reqID, ch.Seq)
 				}
 
 				if completed {
@@ -167,7 +167,7 @@ func Run(ctx context.Context, dev *mt.Device, cfg Config) error {
 			case <-sigCh:
 				if !ctrlCUsed {
 					ctrlCUsed = true
-					sendCancel(ctx, dev, cfg.Channel, reqID)
+					sendCancel(ctx, dev, cfg.Channel, dest, reqID)
 					fmt.Fprintln(os.Stderr, "\n[mtsh] response canceled by Ctrl+C (press Ctrl+C again to exit)")
 					break Processing
 				}

@@ -13,10 +13,10 @@ import (
 	"mtsh/internal/protofmt"
 )
 
-func handleRequest(ctx context.Context, dev *mt.Device, cfg Config, req protofmt.Request, ackMgr *chunkAckManager) {
+func handleRequest(ctx context.Context, dev *mt.Device, cfg Config, req protofmt.Request, ackMgr *chunkAckManager, dest uint32) {
 	out := runShell(cfg.Shell, req.Command, cfg.CmdTimeout)
 	requireAck := cfg.ChunkAck || req.RequireChunkAck
-	sender, cleanup := newChunkSender(dev, cfg, req, ackMgr, protofmt.ChunkTypeResponse, requireAck)
+	sender, cleanup := newChunkSender(dev, cfg, req, ackMgr, protofmt.ChunkTypeResponse, requireAck, dest)
 	if cleanup != nil {
 		defer cleanup()
 	}
@@ -28,13 +28,13 @@ func handleRequest(ctx context.Context, dev *mt.Device, cfg Config, req protofmt
 	logx.Debugf("server sent response chunks: id=%s ack=%v compressed=%v", req.ID, sender.RequireAck, compressed)
 }
 
-func handleFileChunk(ctx context.Context, dev *mt.Device, cfg Config, chunk protofmt.FileChunk) {
+func handleFileChunk(ctx context.Context, dev *mt.Device, cfg Config, chunk protofmt.FileChunk, dest uint32) {
 	err := processFileChunk(chunk)
 	if !chunk.RequireAck {
 		return
 	}
 	respReq := protofmt.Request{ID: chunk.ID}
-	sender, _ := newChunkSender(dev, cfg, respReq, nil, protofmt.ChunkTypeFileAck, false)
+	sender, _ := newChunkSender(dev, cfg, respReq, nil, protofmt.ChunkTypeFileAck, false, dest)
 	payload := []byte(strconv.Itoa(chunk.Seq))
 	if err != nil {
 		payload = []byte("[mtsh] cp error: " + err.Error() + "\n")
@@ -64,7 +64,7 @@ func runShell(shell, command string, timeout time.Duration) []byte {
 	return buf.Bytes()
 }
 
-func newChunkSender(dev *mt.Device, cfg Config, req protofmt.Request, ackMgr *chunkAckManager, chunkType protofmt.ChunkType, wantAck bool) (chunks.Sender, func()) {
+func newChunkSender(dev *mt.Device, cfg Config, req protofmt.Request, ackMgr *chunkAckManager, chunkType protofmt.ChunkType, wantAck bool, dest uint32) (chunks.Sender, func()) {
 	builder := func(id string, seq int, last bool, total int, data []byte) string {
 		switch chunkType {
 		case protofmt.ChunkTypeFileAck:
@@ -82,6 +82,7 @@ func newChunkSender(dev *mt.Device, cfg Config, req protofmt.Request, ackMgr *ch
 	sender := chunks.Sender{
 		Device:     dev,
 		Channel:    cfg.Channel,
+		Dest:       dest,
 		Builder:    builder,
 		RequireAck: wantAck && ackMgr != nil,
 		AckRetries: retries,

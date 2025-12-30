@@ -5,6 +5,7 @@ import "time"
 // Config holds runtime parameters for the Meshtastic server loop.
 type Config struct {
 	Channel         uint32
+	DmOnly          bool
 	DedupTTL        time.Duration
 	DedupCap        int
 	Shell           string

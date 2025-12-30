@@ -25,6 +25,7 @@ type Waiter func(ctx context.Context, seq int, last bool) error
 type Sender struct {
 	Device     *mt.Device
 	Channel    uint32
+	Dest       uint32
 	Builder    Builder
 	WaitAck    Waiter
 	RequireAck bool
@@ -69,7 +70,11 @@ func (s Sender) SendChunk(ctx context.Context, id string, seq int, last bool, to
 	attempt := 0
 	for {
 		msg := s.Builder(id, seq, last, total, data)
-		if err := s.Device.SendText(ctx, s.Channel, mt.BroadcastDest, msg); err != nil {
+		dest := s.Dest
+		if dest == 0 {
+			dest = mt.BroadcastDest
+		}
+		if err := s.Device.SendText(ctx, s.Channel, dest, msg); err != nil {
 			return err
 		}
 

@@ -21,6 +21,10 @@ var clientCmd = &cobra.Command{
 	Short: "Terminal proxy: send commands over Meshtastic and print replies",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := cmd.Context()
+		nodeDest, err := parseNodeNumber(flagTo)
+		if err != nil {
+			return err
+		}
 		requested := flagPort
 		logx.Debugf("client command starting: requestedPort=%s channel=%d", requested, flagChannel)
 		dev, port, err := openDevice(ctx)
@@ -30,7 +34,7 @@ var clientCmd = &cobra.Command{
 		defer dev.Close()
 		logx.Debugf("client command connected to device: port=%s", port)
 
-		fmt.Printf("client: port=%s channel=%d wait-timeout=%s\n", port, flagChannel, flagWaitTimeout)
+		fmt.Printf("client: port=%s channel=%d dest=%d wait-timeout=%s\n", port, flagChannel, nodeDest, flagWaitTimeout)
 		nodeInfo := dev.Info()
 		fmt.Printf("node: %s\n", nodeInfo)
 		logx.Debugf("client connected node: %s", nodeInfo)
@@ -40,6 +44,7 @@ var clientCmd = &cobra.Command{
 
 		cfg := client.Config{
 			Channel:      flagChannel,
+			Dest:         nodeDest,
 			WaitTimeout:  flagWaitTimeout,
 			ChunkAck:     useChunkAck,
 			StreamChunks: flagStreamChunks,
