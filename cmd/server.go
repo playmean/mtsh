@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"mtsh/internal/logx"
+	"mtsh/internal/manifest"
 	"mtsh/internal/server"
 
 	"github.com/spf13/cobra"
@@ -24,6 +25,7 @@ var serverCmd = &cobra.Command{
 	Short: "Run commands received over Meshtastic and reply with output",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := cmd.Context()
+		fmt.Printf("%s server starting (version %s)\n", manifest.AppName, manifest.Version)
 		allowChannel := false
 		if flag := cmd.Flag("channel"); flag != nil && flag.Changed {
 			allowChannel = true
