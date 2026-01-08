@@ -15,10 +15,25 @@ mtsh is a command-line tool that provides a remote shell over Meshtastic text me
 - Access to a Meshtastic device via serial port, BLE, or another supported port string.
 
 ## Installation
+
+### From source
 ```bash
-go build ./...
+go build -o mtsh main.go
 ```
 This produces the `mtsh` binary in the current directory.
+
+### Install from prebuilt binary
+
+Download the binary for your platform from the latest release:
+https://github.com/playmean/mtsh/releases/latest
+
+Example:
+```bash
+curl -LO https://github.com/playmean/mtsh/releases/latest/download/mtsh-X.Y.Z-linux-amd64
+chmod +x mtsh-X.Y.Z-linux-amd64
+sudo mv mtsh-X.Y.Z-linux-amd64 /usr/local/bin/mtsh
+mtsh version
+```
 
 ## Usage
 Most commands require exactly one of `--channel` or `--to`; using both together is not supported. The `nodes` command needs neither. Common flags include `--port`, `--chunk-bytes`, `--hop-limit`, and verbosity controls. If `--port` is omitted, mtsh attaches to the first compatible serial device. Use `-h` for full command help.
