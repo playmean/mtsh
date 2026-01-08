@@ -61,7 +61,7 @@ jobs:
 
           mkdir -p dist
 
-          BIN="${{ github.event.repository.name }}_${VERSION}_${GOOS}_${GOARCH}"
+          BIN="${{ github.event.repository.name }}-${VERSION}-${GOOS}-${GOARCH}"
           if [ -n "$GOARM" ]; then
             BIN="${BIN}v${GOARM}"
           fi
