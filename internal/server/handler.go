@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os/exec"
 	"strconv"
 	"time"
@@ -13,8 +14,12 @@ import (
 	"mtsh/internal/protofmt"
 )
 
-func handleRequest(ctx context.Context, dev *mt.Device, cfg Config, req protofmt.Request, ackMgr *chunkAckManager, dest uint32) {
+func handleRequest(ctx context.Context, dev *mt.Device, cfg Config, req protofmt.Request, ackMgr *chunkAckManager, dest uint32, plain bool) {
 	out := runShell(cfg.Shell, req.Command, cfg.CmdTimeout)
+	if plain {
+		sendPlainResponse(ctx, dev, cfg, req.ID, out, dest)
+		return
+	}
 	requireAck := cfg.ChunkAck || req.RequireChunkAck
 	sender, cleanup := newChunkSender(dev, cfg, req, ackMgr, protofmt.ChunkTypeResponse, requireAck, dest)
 	if cleanup != nil {
@@ -42,6 +47,28 @@ func handleFileChunk(ctx context.Context, dev *mt.Device, cfg Config, chunk prot
 	if sendErr := sender.SendChunk(ctx, chunk.ID, chunk.Seq, chunk.Last, chunk.Total, payload); sendErr != nil {
 		logx.Debugf("server failed to send cp ack: id=%s err=%v", chunk.ID, sendErr)
 	}
+}
+
+func sendPlainResponse(ctx context.Context, dev *mt.Device, cfg Config, requestID string, payload []byte, dest uint32) {
+	builder := func(id string, seq int, last bool, total int, data []byte) string {
+		if total <= 1 {
+			return string(data)
+		}
+		return fmt.Sprintf("%d/%d\n%s", seq+1, total, string(data))
+	}
+	sender := chunks.Sender{
+		Device:     dev,
+		Channel:    cfg.Channel,
+		Dest:       dest,
+		Builder:    builder,
+		RequireAck: false,
+		ChunkDelay: cfg.ChunkDelay,
+	}
+	if _, err := sender.SendPayload(ctx, requestID, payload, cfg.ChunkBytes, false); err != nil {
+		logx.Debugf("server failed to send plain response: id=%s err=%v", requestID, err)
+		return
+	}
+	logx.Debugf("server sent plain response: id=%s chunksize=%d", requestID, cfg.ChunkBytes)
 }
 
 func runShell(shell, command string, timeout time.Duration) []byte {

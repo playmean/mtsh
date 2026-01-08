@@ -6,6 +6,7 @@ import "time"
 type Config struct {
 	Channel         uint32
 	AllowChannel    bool
+	AllowPlain      bool
 	DmWhitelist     map[uint32]struct{}
 	DedupTTL        time.Duration
 	DedupCap        int

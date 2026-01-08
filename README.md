@@ -37,6 +37,14 @@ Optional broadcast-on-channel startup (for users who understand the risks):
 ```
 Useful flags for either mode:
 - `--no-chunk-ack` to disable chunk acknowledgements if you prefer timed delays.
+- `--allow-plain` to accept plain text commands (see below).
+
+#### Plain mode
+Use `--allow-plain` when integrating with tools or apps that sends plain text messages. In this mode:
+- Incoming non-empty text packets are treated as shell commands without extra flags or prefixes.
+- Responses are returned as plain text chunks instead of proto-formatted messages.
+- When an output spans multiple chunks, each chunk starts with `N/M` (for example `1/5`) so receivers can reassemble the stream.
+- Chunk delays follow `--chunk-delay`, and no acknowledgements or promos are sent; the server simply transmits the chunks with the configured pause.
 
 ### Run a client
 Use from a node that should send commands and collect output:

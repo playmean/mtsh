@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"mtsh/internal/logx"
 	"mtsh/internal/lru"
@@ -84,6 +85,20 @@ func Run(ctx context.Context, dev *mt.Device, cfg Config) error {
 		}
 
 		req, ok := protofmt.ParseRequest(rx.Text)
+		plainReq := false
+		if !ok && cfg.AllowPlain {
+			cmd := strings.TrimSpace(rx.Text)
+			if cmd != "" {
+				req = protofmt.Request{
+					ID:              fmt.Sprintf("plain_%d_%d", rx.FromNode, rx.PacketID),
+					Command:         cmd,
+					RequireChunkAck: false,
+				}
+				plainReq = true
+				ok = true
+				logx.Debugf("server accepting plain request: packet=%d from=%d cmd=%q", rx.PacketID, rx.FromNode, cmd)
+			}
+		}
 		if !ok {
 			logx.Debugf("server ignoring non-request packet")
 			continue
@@ -107,7 +122,7 @@ func Run(ctx context.Context, dev *mt.Device, cfg Config) error {
 		go func() {
 			defer cleanup()
 			defer cancel()
-			handleRequest(reqCtx, dev, cfg, req, ackMgr, respDest)
+			handleRequest(reqCtx, dev, cfg, req, ackMgr, respDest, plainReq)
 		}()
 	}
 }

@@ -12,10 +12,11 @@ import (
 )
 
 var (
-	flagShell      string
-	flagCmdTimeout time.Duration
-	flagDmOnly     bool
+	flagShell       string
+	flagCmdTimeout  time.Duration
+	flagDmOnly      bool
 	flagDmWhitelist []string
+	flagAllowPlain  bool
 )
 
 var serverCmd = &cobra.Command{
@@ -52,6 +53,7 @@ var serverCmd = &cobra.Command{
 		cfg := server.Config{
 			Channel:         flagChannel,
 			AllowChannel:    allowChannel,
+			AllowPlain:      flagAllowPlain,
 			DmWhitelist:     dmWhitelist,
 			DedupTTL:        flagDedupTTL,
 			DedupCap:        flagDedupCap,
@@ -73,6 +75,7 @@ func init() {
 	serverCmd.Flags().DurationVar(&flagCmdTimeout, "cmd-timeout", 20*time.Second, "Per-command execution timeout")
 	serverCmd.Flags().BoolVar(&flagDmOnly, "dm-only", false, "Accept only direct messages addressed to this node")
 	serverCmd.Flags().StringSliceVar(&flagDmWhitelist, "dm-whitelist", nil, "Comma-separated list of node IDs allowed to reach the server")
+	serverCmd.Flags().BoolVar(&flagAllowPlain, "allow-plain", false, "Accept plain text requests without mtsh prefix and reply in plain text")
 }
 
 func parseNodeWhitelist(raw []string) (map[uint32]struct{}, error) {
