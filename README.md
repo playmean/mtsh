@@ -46,6 +46,12 @@ Use `--allow-plain` when integrating with tools or apps that sends plain text me
 - When an output spans multiple chunks, each chunk starts with `N/M` (for example `1/5`) so receivers can reassemble the stream.
 - Chunk delays follow `--chunk-delay`, and no acknowledgements or promos are sent; the server simply transmits the chunks with the configured pause.
 
+### Run in Docker
+Run the server in a container with a USB serial device passed through:
+```bash
+docker run --rm -it --device /dev/ttyUSB0 ghcr.io/playmean/mtsh:latest server -v --dm-only --dm-whitelist 0x12345678
+```
+
 ### Run a client
 Use from a node that should send commands and collect output:
 ```bash
