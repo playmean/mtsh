@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"mtsh/internal/logx"
+	"mtsh/internal/mt"
 
 	"github.com/spf13/cobra"
 )
@@ -46,6 +47,7 @@ func init() {
 		logx.EnableDebug(flagVerbose)
 		if flagVerbose {
 			logx.Debugf("debug logging enabled")
+			mt.EnableMeshtasticDebug()
 		}
 	})
 
