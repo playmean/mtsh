@@ -49,7 +49,7 @@ func init() {
 		}
 	})
 
-	rootCmd.PersistentFlags().StringVar(&flagPort, "port", "", "Device port (e.g. /dev/ttyUSB0, COM5, ble://00:11:22:33:44:55). Auto-detected if unset")
+	rootCmd.PersistentFlags().StringVar(&flagPort, "port", "", "Device port (e.g. /dev/ttyUSB0, COM5, ble://00:11:22:33:44:55, http://host:8080). Auto-detected if unset")
 	rootCmd.PersistentFlags().Uint32Var(&flagChannel, "channel", 0, "Meshtastic channel index (0..)")
 	rootCmd.PersistentFlags().IntVar(&flagChunkBytes, "chunk-bytes", 128, "Max payload bytes per outgoing text message chunk")
 	rootCmd.PersistentFlags().DurationVar(&flagAckTimeout, "ack-timeout", 10*time.Second, "Timeout waiting for radio ACK from Meshtastic device")

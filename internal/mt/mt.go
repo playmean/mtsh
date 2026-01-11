@@ -144,6 +144,11 @@ func (d *Device) Close() error {
 }
 
 func openTransport(target string) (meshtastic.HardwareTransport, string, error) {
+	if isHTTPTarget(target) {
+		logx.Debugf("mt: opening HTTP transport %s", target)
+		t, err := connect.NewTransport(target)
+		return t, target, err
+	}
 	if isBLETarget(target) {
 		normalized := normalizeBLETarget(target)
 		if err := enableBLEAdapter(); err != nil {
@@ -156,6 +161,11 @@ func openTransport(target string) (meshtastic.HardwareTransport, string, error) 
 	logx.Debugf("mt: opening serial port %s", target)
 	t, err := newSerialTransport(target)
 	return t, target, err
+}
+
+func isHTTPTarget(target string) bool {
+	lower := strings.ToLower(target)
+	return strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://")
 }
 
 func isBLETarget(target string) bool {

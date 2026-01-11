@@ -1,6 +1,6 @@
 # mtsh
 
-mtsh is a command-line tool that provides a remote shell over Meshtastic text messages. It pairs with a Meshtastic device (serial, BLE, or network port), runs shell commands received over the mesh, and streams the output back in chunked text responses.
+mtsh is a command-line tool that provides a remote shell over Meshtastic text messages. It pairs with a Meshtastic device (serial, BLE, or HTTP), runs shell commands received over the mesh, and streams the output back in chunked text responses.
 
 ## Features
 - **Remote execution server**: Accept Meshtastic messages containing shell commands and return their output.
@@ -12,7 +12,7 @@ mtsh is a command-line tool that provides a remote shell over Meshtastic text me
 
 ## Requirements
 - Go 1.24 or later (see `go.mod`).
-- Access to a Meshtastic device via serial port, BLE, or another supported port string.
+- Access to a Meshtastic device via serial port, BLE, or HTTP API.
 
 ## Installation
 
@@ -37,6 +37,7 @@ mtsh version
 
 ## Usage
 Most commands require exactly one of `--channel` or `--to`; using both together is not supported. The `nodes` command needs neither. Common flags include `--port`, `--chunk-bytes`, `--hop-limit`, and verbosity controls. If `--port` is omitted, mtsh attaches to the first compatible serial device. Use `-h` for full command help.
+To connect over the Meshtastic HTTP API, pass `--port http://host:port` (or `https://...`).
 
 ### Start a server
 Run on the device that should execute shell commands.
